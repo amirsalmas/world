@@ -953,7 +953,9 @@ def load():
     DB["settings"]["channel"] = DB["settings"].get("channel") or CHANNEL
     if not DB.get("admin_code"):
         DB["admin_code"] = "".join(random.choice("abcdefghjkmnpqrstuvwxyz23456789") for _ in range(8))
-    save()
+    save()     # ─── مالک همیشه ادمین هست ───
+    if OWNER_ID and OWNER_ID not in DB["settings"]["admins"]:
+        DB["settings"]["admins"].append(OWNER_ID)
 
 
 def save():
