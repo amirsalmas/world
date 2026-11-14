@@ -3623,6 +3623,8 @@ ECO_ROWS = [[B_UP_ECO, B_UP_TECH], [B_UP_FORT, B_FACT], [B_MARKET, B_RES], [B_PO
 ADMIN_ROWS = [[A_REQ, A_COUNTRIES], [A_MONEY, A_PACKADM], [A_PLAYERS, A_RES], [A_RULES, A_IMG],
               [A_ECOADM, A_ANN], [A_EVENT, A_SET], [A_STATS], [B_BACK]]
 B_CHANGE = "🔄 درخواست تغییر کشور"
+
+A_OWNER = "👑 پنل مالک"
 def main_rows(uid):
     if mine(uid):
         rows = [[B_MY, B_SHOP], [B_WAR, B_DIP], [B_ECO, B_BUILD], [B_BANK, B_CRYPTO], [B_UNION, B_PACKS],
