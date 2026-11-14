@@ -44,7 +44,7 @@ except Exception:  # noqa: BLE001
     Image = ImageDraw = ImageFont = ImageFilter = None
 
 # ═════════════ تنظیمات (فقط همین بخش رو عوض کن) ═════════════
-TOKEN = os.environ.get("8663088929:AAEfWBjU-Hv5-S_hJmvDGNRQbfOiljDXmj8", "PUT_YOUR_BOT_TOKEN_HERE")  # توکن از @BotFather تلگرام
+TOKEN = os.environ.get("BOT_TOKEN", "PUT_YOUR_BOT_TOKEN_HERE") # توکن از @BotFather تلگرام
 ADMIN_IDS = ["6015642359"]           # آیدی عددی ادمین‌ها
 CHANNEL = "@WorldWar_Empire"         # کانال (ربات باید ادمین کانال باشه)
 CHANNEL_USERNAME = CHANNEL.lstrip("@")
