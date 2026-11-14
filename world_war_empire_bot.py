@@ -953,10 +953,15 @@ def load():
     DB["settings"]["channel"] = DB["settings"].get("channel") or CHANNEL
     if not DB.get("admin_code"):
         DB["admin_code"] = "".join(random.choice("abcdefghjkmnpqrstuvwxyz23456789") for _ in range(8))
-       # ─── مالک همیشه ادمین هست ───
+    # ─── مالک همیشه ادمین هست ───
     if OWNER_ID and OWNER_ID not in DB["settings"]["admins"]:
         DB["settings"]["admins"].append(OWNER_ID)
     save()
+
+
+def save():
+    tmp = DATA_FILE + ".tmp"
+    ...
 def save():
     tmp = DATA_FILE + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
@@ -3617,7 +3622,7 @@ DIP_ROWS = [[B_TRADE, B_ALLY], [B_BREAK, B_AID], [B_UNION, B_SANC], [B_BACK]]
 ECO_ROWS = [[B_UP_ECO, B_UP_TECH], [B_UP_FORT, B_FACT], [B_MARKET, B_RES], [B_POLICY, B_SALARY], [B_BACK]]
 ADMIN_ROWS = [[A_REQ, A_COUNTRIES], [A_MONEY, A_PACKADM], [A_PLAYERS, A_RES], [A_RULES, A_IMG],
               [A_ECOADM, A_ANN], [A_EVENT, A_SET], [A_STATS], [B_BACK]]
-
+B_CHANGE = "🔄 درخواست تغییر کشور"
 def main_rows(uid):
     if mine(uid):
         rows = [[B_MY, B_SHOP], [B_WAR, B_DIP], [B_ECO, B_BUILD], [B_BANK, B_CRYPTO], [B_UNION, B_PACKS],
@@ -3625,7 +3630,9 @@ def main_rows(uid):
     else:
         rows = [[B_REQ], [B_CUP, B_RANK]]
     rows.append([B_LANG])
-    if is_admin(uid):
+    if is_owner(uid):
+        rows.append([A_OWNER, B_ADMIN])
+    elif is_admin(uid):
         n = len(DB["requests"])
         rows.append([B_ADMIN] + (["📥 درخواست‌ها (%d)" % n] if n else []))
     return rows
