@@ -6812,7 +6812,87 @@ def r_news(uid):
     L.append("\n📢 همه‌ی اخبار: @" + CHANNEL_USERNAME)
     tell(uid, "\n".join(L), main_rows(uid))
 
+# ═════════════ پنل مالک ═════════════
+A_OWNER = "👑 پنل مالک"
+OW_ADMINS, OW_ADD_ADM, OW_DEL_ADM = "👥 مدیریت ادمین‌ها", "➕ افزودن ادمین", "🗑 حذف ادمین"
+OWNER_ROWS = [[OW_ADMINS], [OW_ADD_ADM, OW_DEL_ADM], [A_PANEL]]
 
+
+def owner_only(uid):
+    if not is_owner(uid):
+        tell(uid, "⛔ این بخش فقط برای مالک رباته.")
+        return False
+    return True
+
+
+@route(A_OWNER, admin=True)
+def a_owner(uid):
+    if not owner_only(uid):
+        return
+    admins = DB["settings"]["admins"]
+    L = ["👑 پنل مالک", "━━━━━━━━━━━━", "👤 مالک: %s" % ulabel(OWNER_ID),
+         "👥 تعداد ادمین‌ها: %d" % len(admins), "", "🛠 ادمین‌های فعلی:"]
+    for a in admins:
+        L.append("  • %s" % ulabel(a))
+    tell(uid, "\n".join(L), OWNER_ROWS)
+
+
+@route(OW_ADD_ADM, admin=True)
+def ow_add_adm(uid):
+    if not owner_only(uid):
+        return
+    ask(uid, "➕ آیدی عددی کاربری که می‌خوای ادمین کنی رو بفرست:", lambda t: ow_add_adm_do(uid, t))
+
+
+def ow_add_adm_do(uid, t):
+    if not owner_only(uid):
+        return
+    aid = en_digits(t).strip()
+    if not aid.isdigit():
+        return back_to(uid, "❌ آیدی باید عدد باشه.", OWNER_ROWS)
+    if aid in DB["settings"]["admins"]:
+        return back_to(uid, "✅ این کاربر از قبل ادمینه.", OWNER_ROWS)
+    DB["settings"]["admins"].append(aid)
+    tell(aid, "👑 تو توسط مالک ربات ادمین شدی!")
+    back_to(uid, "✅ %s ادمین شد." % ulabel(aid), OWNER_ROWS)
+
+
+@route(OW_DEL_ADM, admin=True)
+def ow_del_adm(uid):
+    if not owner_only(uid):
+        return
+    admins = [a for a in DB["settings"]["admins"] if a != OWNER_ID]
+    if not admins:
+        return back_to(uid, "ادمینی برای حذف نیست.", OWNER_ROWS)
+    rows = [[ulabel(a)] for a in admins]
+    labels = {ulabel(a): a for a in admins}
+
+    def h(t):
+        aid = labels.get(t)
+        if not aid:
+            return ow_del_adm(uid)
+        if aid not in DB["settings"]["admins"]:
+            return back_to(uid, "این کاربر ادمین نیست.", OWNER_ROWS)
+        DB["settings"]["admins"].remove(aid)
+        tell(aid, "⛔ دسترسی ادمینی شما توسط مالک ربات لغو شد.")
+        back_to(uid, "🗑 %s از ادمین‌ها حذف شد." % ulabel(aid), OWNER_ROWS)
+
+    ask(uid, "🗑 کدوم ادمین حذف بشه؟", h, rows)
+
+
+@route(OW_ADMINS, admin=True)
+def ow_admins(uid):
+    if not owner_only(uid):
+        return
+    admins = DB["settings"]["admins"]
+    L = ["👥 مدیریت ادمین‌ها", ""]
+    if not admins:
+        L.append("هنوز ادمینی نیست.")
+    for i, a in enumerate(admins, 1):
+        L.append("%d. %s" % (i, ulabel(a)))
+    back_to(uid, "\n".join(L), OWNER_ROWS)
+# ═════════════════════════════════════════════════════════════
+  
 # ═════════════ پنل ادمین ═════════════
 @route(B_ADMIN, A_PANEL, admin=True)
 def a_panel(uid):
