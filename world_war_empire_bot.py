@@ -44,8 +44,9 @@ except Exception:  # noqa: BLE001
     Image = ImageDraw = ImageFont = ImageFilter = None
 
 # ═════════════ تنظیمات (فقط همین بخش رو عوض کن) ═════════════
-TOKEN = os.environ.get("BOT_TOKEN", "8663088929:AAEfWBjU-Hv5-S_hJmvDGNRQbfOiljDXmj8") # توکن از @BotFather تلگرام
-ADMIN_IDS = ["6015642359", "8043789696"]          # آیدی عددی ادمین‌ها
+TOKEN = os.environ.get("BOT_TOKEN", "8663088929:AAEfWBjU-Hv5-S_hJmvDGNRQbfOiljDXmj8")  # توکن از @BotFather تلگرام
+OWNER_ID = "6015642359"              # 👑 مالک اصلی ربات
+ADMIN_IDS = ["8043789696"]           # 🛠 ادمین‌ها
 CHANNEL = "@WorldWar_Empire"         # کانال (ربات باید ادمین کانال باشه)
 CHANNEL_USERNAME = CHANNEL.lstrip("@")
 ADMIN_USERNAME = ""                  # (اختیاری) آیدی تلگرام ادمین برای نمایش، بدون @
@@ -59,7 +60,6 @@ STATEMENT_COOLDOWN = 180                                      # ثانیه بی�
 IMG_DIR = os.environ.get("WW_IMAGES", "ww_images")            # (اختیاری) پوشه‌ی عکس گزارش‌ها: war.jpg, peace.png ...
 INCOME_MULT = float(os.environ.get("WW_INCOME", "10"))      # ضریب حقوق/درآمد (۱۰ = ده برابر نسخه‌ی قبل)
 # ═════════════════════════════════════════════════════════════
-
 try:  # فقط IPv4؛ روی بعضی شبکه‌ها IPv6 باعث تأخیر چند ده ثانیه‌ای می‌شه
     import urllib3.util.connection as _u3c
     _u3c.allowed_gai_family = lambda: socket.AF_INET
