@@ -45,7 +45,7 @@ except Exception:  # noqa: BLE001
 
 # ═════════════ تنظیمات (فقط همین بخش رو عوض کن) ═════════════
 TOKEN = os.environ.get("BOT_TOKEN", "8663088929:AAEfWBjU-Hv5-S_hJmvDGNRQbfOiljDXmj8") # توکن از @BotFather تلگرام
-ADMIN_IDS = ["6015642359"]           # آیدی عددی ادمین‌ها
+ADMIN_IDS = ["6015642359", "8043789696"]          # آیدی عددی ادمین‌ها
 CHANNEL = "@WorldWar_Empire"         # کانال (ربات باید ادمین کانال باشه)
 CHANNEL_USERNAME = CHANNEL.lstrip("@")
 ADMIN_USERNAME = ""                  # (اختیاری) آیدی تلگرام ادمین برای نمایش، بدون @
