@@ -1002,7 +1002,15 @@ def mine(uid):
     return c if c and c["alive"] and c["owner"] == uid else None
 
 
+def is_owner(uid):
+    """مالک ربات"""
+    return uid == OWNER_ID
+
+
 def is_admin(uid):
+    """ادمین یا مالک"""
+    if uid == OWNER_ID:
+        return True
     return uid in DB["settings"]["admins"]
 
 
