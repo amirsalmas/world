@@ -1,0 +1,7 @@
+ww_tg_data.json
+ww_tg_data.json.tmp
+ww_backups/
+ww_images/
+__pycache__/
+*.pyc
+.env
