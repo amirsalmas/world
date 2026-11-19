@@ -22,6 +22,7 @@
 """
 import io
 import json
+import gzip
 import hmac
 import base64
 import zlib
@@ -61,6 +62,7 @@ API_GROUP_GAP = max(3.0, min(10.0, float(os.environ.get("WW_API_GROUP_GAP", "3.2
 USER_BURST_COUNT = max(3, min(20, int(os.environ.get("WW_USER_BURST_COUNT", "8"))))
 USER_BURST_WINDOW = max(5, min(60, int(os.environ.get("WW_USER_BURST_WINDOW", "10"))))
 USER_MINUTE_LIMIT = max(USER_BURST_COUNT, min(120, int(os.environ.get("WW_USER_MINUTE_LIMIT", "40"))))
+FLOOD_BAN_PER_SECOND = max(20, min(500, int(os.environ.get("WW_FLOOD_BAN_PER_SECOND", "100"))))
 ATTACK_COOLDOWN = int(os.environ.get("WW_COOLDOWN", "180"))  # ثانیه بین دو حمله
 STATEMENT_COOLDOWN = 180                                      # ثانیه بین دو بیانیه
 IMG_DIR = os.environ.get("WW_IMAGES", "ww_images")            # (اختیاری) پوشه‌ی عکس گزارش‌ها: war.jpg, peace.png ...
@@ -3457,7 +3459,7 @@ A_MONEY, A_UNITS, A_ATTR = "💰 تغییر پول", "🎖 تغییر تجهیز
 A_CH, A_ALL = "📣 پیام به کانال", "📨 پیام به همه"
 A_PAUSE, A_SPEED, A_PROT, A_AUTO = "⏸ توقف/ادامه بازی", "⚡ سرعت بازی", "🛡 مدت حفاظت", "🔁 رویداد خودکار"
 A_SETCH, A_TESTCH, A_RESET = "📣 تنظیم کانال", "🧪 تست کانال", "♻️ ریست بازی"
-A_RECOVERY, A_EXPORT, A_LOGSNAP = "📥 بازیابی از فایل/لاگ", "📤 دریافت پشتیبان کامل", "🧾 ثبت snapshot در لاگ Railway"
+A_RECOVERY, A_EXPORT, A_LOGSNAP = "📥 آپلود سیو و بازیابی", "💾 سیو کامل دیتاها", "🧾 ثبت snapshot در لاگ Railway"
 
 COUNTRY_ROWS = [[A_ADD, A_DEL], [A_FREE, A_REVIVE], [A_GIVE], [A_PANEL]]
 PLAYER_ROWS = [[A_LIST, A_BAN], [A_MSG, A_ADDADMIN], [A_PANEL]]
@@ -6731,12 +6733,50 @@ def _validate_game_db(candidate):
     return True
 
 
+def _summarize_railway_log(text_data):
+    """فقط شواهد صریح لاگ را گزارش می‌کند؛ از لاگ عملیاتی دارایی یا مالکیت حدس نمی‌زند."""
+    lines = text_data.splitlines()
+    stamps = []
+    for line in lines:
+        mt = re.search(r"(20\d{2}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})", line)
+        if mt:
+            stamps.append(mt.group(1))
+    tags = {
+        "راه‌اندازی/اتصال": sum(1 for x in lines if any(k in x.lower() for k in ("starting", "started", "connected", "ربات روشن", "متصل شد"))),
+        "خطای تلگرام": sum(1 for x in lines if any(k in x.lower() for k in ("telegram", "chat not found", "bot not member", "blocked by user", "error", "خطا"))),
+        "تأخیر پیام": sum(1 for x in lines if "تأخیر" in x or "delayed" in x.lower()),
+        "snapshot کامل": sum(1 for x in lines if "WW_STATE_SNAPSHOT_PART:" in x or "WW_STATE_SNAPSHOT_BASE64:" in x or "WW_STATE_JSON:" in x),
+    }
+    period = (stamps[0] + " تا " + stamps[-1]) if stamps else "زمان دقیق در لاگ پیدا نشد"
+    return "\n".join(["گزارش بررسی لاگ Railway:", "• تعداد خطوط: %d" % len(lines), "• بازه زمانی ثبت‌شده: %s" % period] + ["• %s: %d" % (k, v) for k, v in tags.items()])
+
+
 def _extract_recovery_db(raw):
     """پذیرش JSON مستقیم یا snapshot مشخص‌شده در لاگ؛ از حدس زدن دارایی‌ها خودداری می‌کند."""
-    text_data = raw.decode("utf-8-sig", errors="replace") if isinstance(raw, bytes) else str(raw)
+    if isinstance(raw, bytes):
+        # بکاپ خودکار سرور با gzip ذخیره می‌شود؛ مستقیماً از تلگرام هم قابل بازیابی باشد.
+        if raw.startswith(b"\x1f\x8b"):
+            try:
+                with gzip.GzipFile(fileobj=io.BytesIO(raw), mode="rb") as gz:
+                    chunks = []
+                    total = 0
+                    while True:
+                        chunk = gz.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        total += len(chunk)
+                        if total > 128 * 1024 * 1024:
+                            raise ValueError("حجم دیتابیس پس از بازکردن فشرده‌سازی بیشتر از ۱۲۸ مگابایت است.")
+                        chunks.append(chunk)
+                raw = b"".join(chunks)
+            except Exception as exc:
+                raise ValueError("فایل بکاپ فشرده خراب یا ناقص است: %s" % exc)
+        text_data = raw.decode("utf-8-sig", errors="replace")
+    else:
+        text_data = str(raw)
     text_data = text_data.strip()
 
-    # حالت اول: فایل پشتیبان JSON که خود ربات صادر می‌کند
+    # حالت اول: فایل پشتیبان JSON که خود ربات صادر می‌کند یا JSON.GZ خودکار سرور
     try:
         obj = json.loads(text_data)
         _validate_game_db(obj)
@@ -6792,10 +6832,12 @@ def _extract_recovery_db(raw):
             except Exception as exc:
                 raise ValueError("snapshot داخل لاگ قابل خواندن نیست: %s" % exc)
 
+    log_report = _summarize_railway_log(text_data)
     raise ValueError(
-        "در این فایل فقط لاگ عملیاتی دیده شد و snapshot کامل دیتابیس وجود ندارد. "
-        "لاگ Railway معمولاً پول، منابع، مالکیت کشورها و تمام وضعیت بازی را ثبت نمی‌کند؛ "
-        "برای بازیابی دقیق، فایل JSON پشتیبان ربات را بارگذاری کن."
+        "این فایل به‌عنوان لاگ بررسی شد، اما snapshot کامل دیتابیس در آن پیدا نشد؛ بنابراین چیزی روی دیتابیس فعلی اعمال نشد.\n\n"
+        + log_report + "\n\n"
+        "لاگ عملیاتی فقط رویدادها و خطاهای ثبت‌شده را نشان می‌دهد؛ پول، منابع، مالکیت و وضعیت کامل بازی در این فایل ثبت نشده‌اند. "
+        "اگر snapshot با نشانگر WW_STATE_SNAPSHOT در لاگ باشد، بازیابی خودکار انجام می‌شود؛ در غیر این صورت برای بازیابی واقعی باید فایل JSON سیو کامل را بفرستی."
     )
 
 
@@ -6857,11 +6899,11 @@ def a_export(uid):
     try:
         payload = json.dumps(DB, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
-        result = send_document(uid, "worldwar-backup-%s.json" % stamp, io.BytesIO(payload),
-                               "📦 نسخه پشتیبان کامل بازی\nکشورها: %d | کاربران: %d\nاین فایل را در جای امن نگه دار."
+        result = send_document(uid, "worldwar-full-save-%s.json" % stamp, io.BytesIO(payload),
+                               "📦 سیو کامل و قابل‌بازیابی بازی\nکشورها: %d | کاربران: %d\nاین فایل را در Saved Messages یا فضای امن ذخیره کن؛ برای بازیابی، دکمه آپلود سیو را بزن."
                                % (len(DB.get("countries", {})), len(DB.get("users", {}))))
         if result.get("ok"):
-            tell(uid, "✅ فایل پشتیبان کامل ارسال شد.", ADMIN_ROWS)
+            tell(uid, "✅ فایل کامل اطلاعات بازی برایت ارسال شد. همین فایل را نگه دار و هر زمان خواستی با «📥 آپلود سیو و بازیابی» دوباره بارگذاری کن.", ADMIN_ROWS)
         else:
             tell(uid, "⚠️ ارسال فایل ناموفق بود.", ADMIN_ROWS)
     except Exception as exc:
@@ -6873,12 +6915,13 @@ def a_export(uid):
 def a_recovery(uid):
     IMPORT_WAIT.add(uid)
     back_to(uid,
-        "📥 فایل بازیابی را همین‌جا ارسال کن.\n\n"
-        "فرمت قابل قبول:\n"
-        "• فایل JSON پشتیبان کامل که از همین ربات گرفته‌ای\n"
-        "• فایل لاگی که واقعاً شامل نشانگر snapshot کامل باشد\n\n"
-        "⚠️ لاگ عادی Railway معمولاً برای بازسازی پول، منابع، ارتش و مالکیت کشورها کافی نیست. "
-        "قبل از جایگزینی، فایل بررسی می‌شود و از دیتابیس فعلی نسخه احتیاطی ساخته می‌شود.",
+        "📥 فایل سیو را همین‌جا ارسال کن تا کل دیتابیس بازی بازیابی شود.\n\n"
+        "فرمت‌های قابل قبول:\n"
+        "• فایل JSON که با «💾 سیو کامل دیتاها» گرفته‌ای\n"
+        "• فایل بکاپ خودکار سرور با فرمت JSON.GZ\n"
+        "• فایل لاگ Railway؛ ربات snapshotهای کامل داخل لاگ را پیدا و بازیابی می‌کند و لاگ عادی را هم تحلیل می‌کند\n\n"
+        "⚠️ لاگ عادی Railway فقط اطلاعات ثبت‌شده را نشان می‌دهد و نمی‌تواند پول، منابع، ارتش یا مالکیتِ ثبت‌نشده را بازسازی کند. "
+        "فایل قبل از جایگزینی اعتبارسنجی می‌شود و از دیتابیس فعلی هم نسخه احتیاطی ساخته می‌شود.",
         ADMIN_ROWS)
 
 
@@ -8889,9 +8932,13 @@ def snap_list():
 
 def snap_take(tag="snap"):
     os.makedirs(BK_DIR, exist_ok=True)
-    path = os.path.join(BK_DIR, "%s_%d.json.gz" % (tag, int(now())))
-    with gzip.open(path, "wt", encoding="utf-8") as f:
-        json.dump(DB, f, ensure_ascii=False)
+    stamp = int(now())
+    path = os.path.join(BK_DIR, "%s_%d.json.gz" % (tag, stamp))
+    tmp_path = path + ".tmp"
+    # نوشتن اتمیک: اگر پردازش وسط بکاپ متوقف شد، فایل نیمه‌کاره به‌عنوان بکاپ دیده نشود.
+    with gzip.open(tmp_path, "wt", encoding="utf-8") as f:
+        json.dump(DB, f, ensure_ascii=False, separators=(",", ":"))
+    os.replace(tmp_path, path)
     keep = now() - 48 * 3600
     for ts, p in snap_list():
         if ts < keep:
@@ -10653,14 +10700,49 @@ def on_text(uid, chat, text, msg):
     menu(uid, "❓ متوجه نشدم؛ از دکمه‌های منو استفاده کن 👇")
 
 
-# ضداسپم ورودی: هر کاربر حداکثر ۸ پیام در ۱۰ ثانیه و ۴۰ پیام در دقیقه (قابل تنظیم).
+# ضداسپم ورودی: محدودیت نرم برای پیام‌های عادی + بن دائمی در سیل ۱۰۰ پیام در یک ثانیه.
 _INCOMING_RATE = defaultdict(deque)
+_FLOOD_RATE = defaultdict(deque)
 _INCOMING_RATE_LOCK = threading.Lock()
 _INCOMING_CHECKS = 0
 
 
-def allow_incoming(uid):
+def flood_ban_if_needed(uid):
+    """اگر یک کاربر غیرادمین در یک ثانیه به آستانه برسد، بن دائمی و بی‌صدا می‌شود."""
     global _INCOMING_CHECKS
+    uid = str(uid)
+    if is_admin(uid):
+        return False
+    t = time.monotonic()
+    with _INCOMING_RATE_LOCK:
+        q = _FLOOD_RATE[uid]
+        while q and t - q[0] > 1.0:
+            q.popleft()
+        q.append(t)
+        _INCOMING_CHECKS += 1
+        hit = len(q) >= FLOOD_BAN_PER_SECOND
+        if _INCOMING_CHECKS % 500 == 0 and len(_FLOOD_RATE) > 10000:
+            for key in list(_FLOOD_RATE.keys()):
+                recent = _FLOOD_RATE[key]
+                if not recent or t - recent[-1] > 60:
+                    _FLOOD_RATE.pop(key, None)
+    if hit:
+        u = user(uid)
+        if not u.get("banned"):
+            u["banned"] = True
+            u["ban_reason"] = "automatic_flood"
+            u["ban_time"] = int(now())
+            clear(uid)
+            IMPORT_WAIT.discard(uid)
+            PHOTO.pop(uid, None)
+            CTX.pop(uid, None)
+            save()
+            print("[ANTI_SPAM] permanent flood ban uid=%s threshold=%d/sec" % (uid, FLOOD_BAN_PER_SECOND))
+        return True
+    return False
+
+
+def allow_incoming(uid):
     t = time.monotonic()
     with _INCOMING_RATE_LOCK:
         q = _INCOMING_RATE[str(uid)]
@@ -10670,11 +10752,6 @@ def allow_incoming(uid):
         if burst >= USER_BURST_COUNT or len(q) >= USER_MINUTE_LIMIT:
             return False
         q.append(t)
-        _INCOMING_CHECKS += 1
-        if _INCOMING_CHECKS % 500 == 0 and len(_INCOMING_RATE) > 10000:
-            for key in list(_INCOMING_RATE.keys()):
-                if not _INCOMING_RATE[key]:
-                    _INCOMING_RATE.pop(key, None)
         return True
 
 
@@ -10687,11 +10764,16 @@ def handle_update(upd):
     if ch.get("type") != "private" or frm.get("is_bot"):
         return
     chat = str(ch.get("id"))
+    # بن‌شده‌ها کاملاً بی‌صدا نادیده گرفته می‌شوند؛ بات پیام یا پاسخ برایشان نمی‌فرستد.
+    if not is_admin(chat) and DB.get("users", {}).get(chat, {}).get("banned"):
+        return
     mid = msg.get("message_id")
     if mid and (chat, mid) in SEEN:
         return
     SEEN.append((chat, mid))
     del SEEN[:-500]
+    if flood_ban_if_needed(chat):
+        return
     if not allow_incoming(chat):
         # پاسخ ندادن به هر پیام اسپم، خودش از Flood شدن بات جلوگیری می‌کند.
         return
@@ -10727,7 +10809,7 @@ def main():
         print("❌ اول توکن بات رو بذار:\n   BOT_TOKEN=\"توکن\" python main.py")
         sys.exit(1)
     load()
-    print("🛡 محدودیت نرخ خروجی و ضداسپم ورودی فعال است.")
+    print("🛡 ضداسپم فعال: محدودیت نرم پیام‌ها + بن دائمی در %d پیام/ثانیه (فقط ادمین قادر به آنبن است)." % FLOOD_BAN_PER_SECOND)
     print("🔐 سیستم ارتقای ادمین فعال است؛ کد از WW_ADMIN_CODE خوانده می‌شود (در نبود متغیر، کد پیش‌فرض فعال است).")
     print("👑 ادمین‌های اصلی بارگذاری‌شده: %d" % len(ADMIN_IDS))
     # این نسخه از long polling استفاده می‌کند؛ webhook قدیمی را بدون حذف پیام‌های معوق پاک می‌کند.
