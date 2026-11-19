@@ -22,6 +22,8 @@
 """
 import io
 import json
+import base64
+import zlib
 import math
 import os
 import queue
@@ -42,13 +44,13 @@ except Exception:  # noqa: BLE001
     Image = ImageDraw = ImageFont = ImageFilter = None
 
 # ═════════════ تنظیمات (فقط همین بخش رو عوض کن) ═════════════
-TOKEN = os.environ.get("BOT_TOKEN", "8663088929:AAEWUnsv1BfxbflHm3LoKdZYLijU8Dw5960")  # توکن از @BotFather تلگرام
+TOKEN = os.environ.get("BOT_TOKEN", "PUT_YOUR_BOT_TOKEN_HERE")  # توکن از @BotFather تلگرام
 ADMIN_IDS = ["6015642359"]           # آیدی عددی ادمین‌ها
 CHANNEL = "@WorldWar_Empire"         # کانال (ربات باید ادمین کانال باشه)
 CHANNEL_USERNAME = CHANNEL.lstrip("@")
 ADMIN_USERNAME = ""                  # (اختیاری) آیدی تلگرام ادمین برای نمایش، بدون @
 API_HOST = os.environ.get("API_HOST", "https://api.telegram.org")
-ADMIN_CODE = ""                      # (اختیاری) برای دستور /admin؛ خالی = خودکار
+ADMIN_CODE = os.environ.get("WW_ADMIN_CODE", "")  # کد محرمانه را فقط در Variables هاست تنظیم کن؛ داخل GitHub قرار نده
 DATA_FILE = os.environ.get("WW_DATA", "ww_tg_data.json")
 ATTACK_COOLDOWN = int(os.environ.get("WW_COOLDOWN", "180"))  # ثانیه بین دو حمله
 STATEMENT_COOLDOWN = 180                                      # ثانیه بین دو بیانیه
@@ -842,6 +844,7 @@ IDENT = set()
 SEEN = []
 LAST_ROWS = {}   # آخرین دکمه‌های هر کاربر (با هر پیام دوباره فرستاده می‌شن)
 LAG = {}         # تأخیر رسیدن آخرین پیام هر کاربر به بات
+IMPORT_WAIT = set()  # ادمین‌هایی که منتظر دریافت فایل بازیابی هستند
 TICK = {"t": 0.0}
 ROUTES = {}
 ROUTE_N = {}
@@ -3379,6 +3382,7 @@ A_MONEY, A_UNITS, A_ATTR = "💰 تغییر پول", "🎖 تغییر تجهیز
 A_CH, A_ALL = "📣 پیام به کانال", "📨 پیام به همه"
 A_PAUSE, A_SPEED, A_PROT, A_AUTO = "⏸ توقف/ادامه بازی", "⚡ سرعت بازی", "🛡 مدت حفاظت", "🔁 رویداد خودکار"
 A_SETCH, A_TESTCH, A_RESET = "📣 تنظیم کانال", "🧪 تست کانال", "♻️ ریست بازی"
+A_RECOVERY, A_EXPORT, A_LOGSNAP = "📥 بازیابی از فایل/لاگ", "📤 دریافت پشتیبان کامل", "🧾 ثبت snapshot در لاگ Railway"
 
 COUNTRY_ROWS = [[A_ADD, A_DEL], [A_FREE, A_REVIVE], [A_GIVE], [A_PANEL]]
 PLAYER_ROWS = [[A_LIST, A_BAN], [A_MSG, A_ADDADMIN], [A_PANEL]]
@@ -3431,7 +3435,7 @@ WAR_ROWS = [[B_DECL, B_ATK], [B_PEACE, B_WARS], [B_NUKE, B_CYBER], [B_BACK]]
 DIP_ROWS = [[B_TRADE, B_ALLY], [B_BREAK, B_AID], [B_UNION, B_SANC], [B_BACK]]
 ECO_ROWS = [[B_UP_ECO, B_UP_TECH], [B_UP_FORT, B_FACT], [B_MARKET, B_RES], [B_POLICY, B_SALARY], [B_BACK]]
 ADMIN_ROWS = [[A_REQ, A_COUNTRIES], [A_MONEY, A_PACKADM], [A_PLAYERS, A_RES], [A_RULES, A_IMG],
-              [A_ECOADM, A_ANN], [A_EVENT, A_SET], [A_STATS], [B_BACK]]
+              [A_ECOADM, A_ANN], [A_EVENT, A_SET], [A_LOGSNAP, A_RECOVERY], [A_EXPORT], [A_STATS], [B_BACK]]
 
 
 def main_rows(uid):
@@ -6628,6 +6632,253 @@ def r_news(uid):
 
 
 # ═════════════ پنل ادمین ═════════════
+
+# ═════════════ پشتیبان‌گیری و بازیابی امن ═════════════
+MAX_RECOVERY_BYTES = 18 * 1024 * 1024
+
+
+def _validate_game_db(candidate):
+    """فقط snapshot کامل دیتابیس بازی پذیرفته می‌شود؛ متن لاگ به‌تنهایی کافی نیست."""
+    if not isinstance(candidate, dict):
+        raise ValueError("ساختار فایل JSON نیست.")
+    required = ("settings", "users", "countries")
+    if any(k not in candidate for k in required):
+        raise ValueError("فایل، snapshot کامل بازی نیست؛ settings/users/countries ناقص است.")
+    if not all(isinstance(candidate[k], dict) for k in required):
+        raise ValueError("ساختار بخش‌های اصلی دیتابیس نامعتبر است.")
+    if not candidate["countries"]:
+        raise ValueError("فهرست کشورها خالی است.")
+    for iso, country in candidate["countries"].items():
+        if not isinstance(country, dict) or not isinstance(country.get("units"), dict):
+            raise ValueError("اطلاعات کشور %s ناقص است." % iso)
+        if "money" not in country or "owner" not in country:
+            raise ValueError("اطلاعات مالی/مالکیت کشور %s ناقص است." % iso)
+    return True
+
+
+def _extract_recovery_db(raw):
+    """پذیرش JSON مستقیم یا snapshot مشخص‌شده در لاگ؛ از حدس زدن دارایی‌ها خودداری می‌کند."""
+    text_data = raw.decode("utf-8-sig", errors="replace") if isinstance(raw, bytes) else str(raw)
+    text_data = text_data.strip()
+
+    # حالت اول: فایل پشتیبان JSON که خود ربات صادر می‌کند
+    try:
+        obj = json.loads(text_data)
+        _validate_game_db(obj)
+        return obj, "فایل پشتیبان JSON"
+    except (ValueError, json.JSONDecodeError, TypeError):
+        pass
+
+    # حالت دوم: snapshot چندبخشی؛ برای جلوگیری از بریده‌شدن خطوط طولانی در لاگ میزبان
+    parts_by_id = {}
+    part_re = re.compile(r"WW_STATE_SNAPSHOT_PART:([A-Za-z0-9_-]+):(\d+):(\d+):([A-Za-z0-9+/=]+)")
+    for line in text_data.splitlines():
+        match = part_re.search(line)
+        if match:
+            sid, index, total, payload = match.groups()
+            index, total = int(index), int(total)
+            if 1 <= index <= total <= 10000:
+                group = parts_by_id.setdefault(sid, {"total": total, "parts": {}})
+                if group["total"] == total:
+                    group["parts"][index] = payload
+    for sid, group in reversed(list(parts_by_id.items())):
+        if len(group["parts"]) == group["total"] and all(i in group["parts"] for i in range(1, group["total"] + 1)):
+            try:
+                packed = base64.b64decode("".join(group["parts"][i] for i in range(1, group["total"] + 1)), validate=True)
+                decoded = zlib.decompress(packed).decode("utf-8")
+                obj = json.loads(decoded)
+                _validate_game_db(obj)
+                return obj, "snapshot چندبخشی Railway"
+            except Exception as exc:
+                raise ValueError("snapshot چندبخشی %s خراب است: %s" % (sid, exc))
+
+    # حالت سوم: snapshot فشرده تک‌خطی که در صورت وجود در لاگ درج شده باشد
+    marker = "WW_STATE_SNAPSHOT_BASE64:"
+    for line in reversed(text_data.splitlines()):
+        if marker in line:
+            encoded = line.split(marker, 1)[1].strip()
+            try:
+                packed = base64.b64decode(encoded, validate=True)
+                decoded = zlib.decompress(packed).decode("utf-8")
+                obj = json.loads(decoded)
+                _validate_game_db(obj)
+                return obj, "snapshot فشرده داخل لاگ"
+            except Exception as exc:
+                raise ValueError("نشانگر snapshot در لاگ پیدا شد، اما داده خراب یا ناقص است: %s" % exc)
+
+    # حالت چهارم: snapshot JSON تک‌خطی با نشانگر صریح
+    marker = "WW_STATE_JSON:"
+    for line in reversed(text_data.splitlines()):
+        if marker in line:
+            try:
+                obj = json.loads(line.split(marker, 1)[1].strip())
+                _validate_game_db(obj)
+                return obj, "snapshot JSON داخل لاگ"
+            except Exception as exc:
+                raise ValueError("snapshot داخل لاگ قابل خواندن نیست: %s" % exc)
+
+    raise ValueError(
+        "در این فایل فقط لاگ عملیاتی دیده شد و snapshot کامل دیتابیس وجود ندارد. "
+        "لاگ Railway معمولاً پول، منابع، مالکیت کشورها و تمام وضعیت بازی را ثبت نمی‌کند؛ "
+        "برای بازیابی دقیق، فایل JSON پشتیبان ربات را بارگذاری کن."
+    )
+
+
+def _normalize_imported_db(candidate):
+    """اعمال پیش‌فرض‌های نسخه فعلی بدون بازنویسی مقادیر ذخیره‌شده."""
+    base = new_db()
+    for key, value in base.items():
+        candidate.setdefault(key, value)
+    if not isinstance(candidate.get("settings"), dict):
+        raise ValueError("تنظیمات دیتابیس نامعتبر است.")
+    for key, value in base["settings"].items():
+        candidate["settings"].setdefault(key, value)
+    if isinstance(candidate.get("wonders"), list) or not isinstance(candidate.get("wonders"), dict):
+        candidate["wonders"] = {}
+    for country in candidate["countries"].values():
+        ensure(country)
+    if candidate["settings"].get("seed_v", 0) < SEED_V:
+        for iso, fa, en, tier in COUNTRIES:
+            if iso not in candidate["countries"]:
+                candidate["countries"][iso] = make_country(iso, fa, en, tier)
+        candidate["settings"]["seed_v"] = SEED_V
+    init_market_for = candidate.get("market")
+    if not isinstance(init_market_for, dict):
+        candidate["market"] = {}
+    # init_market به DB سراسری وابسته است؛ موقتاً دیتابیس مقصد را جایگزین می‌کنیم.
+    return candidate
+
+
+def send_document(chat, filename, content, caption=""):
+    data = {"chat_id": chat, "caption": caption}
+    files = {"document": (filename, content, "application/json")}
+    return api_form("sendDocument", data, files, read_timeout=60)
+
+
+@route(A_LOGSNAP, admin=True)
+def a_log_snapshot(uid):
+    try:
+        raw = json.dumps(DB, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        packed = base64.b64encode(zlib.compress(raw, 9)).decode("ascii")
+        sid = "%x" % int(now())
+        chunks = [packed[i:i + 2800] for i in range(0, len(packed), 2800)]
+        print("[WW_STATE_SNAPSHOT_BEGIN:%s:%d]" % (sid, len(chunks)))
+        for index, chunk_data in enumerate(chunks, 1):
+            print("WW_STATE_SNAPSHOT_PART:%s:%d:%d:%s" % (sid, index, len(chunks), chunk_data))
+        print("[WW_STATE_SNAPSHOT_END:%s]" % sid)
+        tell(uid,
+             "✅ snapshot کامل در لاگ‌های Railway ثبت شد.\n"
+             "حالا از Deployments → View Logs متن لاگ را کپی کن، به فایل .txt تبدیل کن "
+             "و از گزینه «📥 بازیابی از فایل/لاگ» بارگذاری کن.\n"
+             "شناسه snapshot: %s | بخش‌ها: %d" % (sid, len(chunks)),
+             ADMIN_ROWS)
+    except Exception as exc:
+        print("log snapshot error:", repr(exc))
+        tell(uid, "❌ ثبت snapshot در لاگ ناموفق بود: " + str(exc)[:250], ADMIN_ROWS)
+
+
+@route(A_EXPORT, admin=True)
+def a_export(uid):
+    try:
+        payload = json.dumps(DB, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+        result = send_document(uid, "worldwar-backup-%s.json" % stamp, io.BytesIO(payload),
+                               "📦 نسخه پشتیبان کامل بازی\nکشورها: %d | کاربران: %d\nاین فایل را در جای امن نگه دار."
+                               % (len(DB.get("countries", {})), len(DB.get("users", {}))))
+        if result.get("ok"):
+            tell(uid, "✅ فایل پشتیبان کامل ارسال شد.", ADMIN_ROWS)
+        else:
+            tell(uid, "⚠️ ارسال فایل ناموفق بود.", ADMIN_ROWS)
+    except Exception as exc:
+        print("backup export error:", repr(exc))
+        tell(uid, "❌ ساخت/ارسال پشتیبان ناموفق بود: " + str(exc)[:250], ADMIN_ROWS)
+
+
+@route(A_RECOVERY, admin=True)
+def a_recovery(uid):
+    IMPORT_WAIT.add(uid)
+    back_to(uid,
+        "📥 فایل بازیابی را همین‌جا ارسال کن.\n\n"
+        "فرمت قابل قبول:\n"
+        "• فایل JSON پشتیبان کامل که از همین ربات گرفته‌ای\n"
+        "• فایل لاگی که واقعاً شامل نشانگر snapshot کامل باشد\n\n"
+        "⚠️ لاگ عادی Railway معمولاً برای بازسازی پول، منابع، ارتش و مالکیت کشورها کافی نیست. "
+        "قبل از جایگزینی، فایل بررسی می‌شود و از دیتابیس فعلی نسخه احتیاطی ساخته می‌شود.",
+        ADMIN_ROWS)
+
+
+def _restore_from_upload(uid, document):
+    global DB
+    IMPORT_WAIT.discard(uid)
+    file_id = (document or {}).get("file_id")
+    name = (document or {}).get("file_name") or "uploaded-file"
+    size = int((document or {}).get("file_size") or 0)
+    if not file_id:
+        return tell(uid, "❌ فایل تلگرام شناسه معتبر ندارد.", ADMIN_ROWS)
+    if size and size > MAX_RECOVERY_BYTES:
+        return tell(uid, "❌ حجم فایل بیشتر از سقف ۱۸ مگابایت است.", ADMIN_ROWS)
+    try:
+        meta = api("getFile", {"file_id": file_id}).get("result") or {}
+        remote_path = meta.get("file_path")
+        if not remote_path:
+            raise ValueError("مسیر فایل از تلگرام دریافت نشد.")
+        url = "%s/file/bot%s/%s" % (API_HOST, TOKEN, remote_path)
+        response = _session().get(url, timeout=(10, 60))
+        response.raise_for_status()
+        raw = response.content
+        if len(raw) > MAX_RECOVERY_BYTES:
+            raise ValueError("حجم فایل دانلودشده بیشتر از ۱۸ مگابایت است.")
+        candidate, source_kind = _extract_recovery_db(raw)
+        _validate_game_db(candidate)
+
+        # نگهداری نسخه احتیاطی پیش از هر تغییری
+        backup_path = DATA_FILE + ".pre_restore_" + str(int(now()))
+        with open(backup_path, "w", encoding="utf-8") as f:
+            json.dump(DB, f, ensure_ascii=False)
+
+        previous = DB
+        try:
+            candidate = _normalize_imported_db(candidate)
+            DB = candidate
+            init_market()
+            for admin_id in ADMIN_IDS:
+                if admin_id not in DB["settings"]["admins"]:
+                    DB["settings"]["admins"].append(admin_id)
+            DB["settings"]["admins"] = list(dict.fromkeys(DB["settings"]["admins"]))
+            DB["settings"]["channel"] = DB["settings"].get("channel") or CHANNEL
+            save()
+        except Exception:
+            DB = previous
+            raise
+
+        # زمان مرجع بازی پس از بازیابی، برای جلوگیری از جهش زمانی نامحدود
+        owned = sum(1 for c in DB["countries"].values() if c.get("owner") and c.get("alive"))
+        tell(uid,
+             "✅ بازیابی با موفقیت انجام شد.\n"
+             "📄 منبع: %s\n🌍 کشورها: %s\n👥 کاربران: %s\n"
+             "🏳️ کشورهای دارای رهبر: %s\n🛟 نسخه قبلی: %s\n\n"
+             "دارایی‌ها و تاریخچه از snapshot خوانده شدند؛ هیچ مقدار حدسی ساخته نشد."
+             % (source_kind, len(DB["countries"]), len(DB["users"]), owned, os.path.basename(backup_path)),
+             ADMIN_ROWS)
+        print("[RECOVERY] restored by admin=%s source=%s file=%s countries=%d users=%d"
+              % (uid, source_kind, name[:100], len(DB["countries"]), len(DB["users"])))
+    except Exception as exc:
+        print("recovery import error:", repr(exc))
+        tell(uid, "❌ بازیابی انجام نشد؛ دیتابیس فعلی دست‌نخورده ماند.\n" + str(exc)[:900], ADMIN_ROWS)
+
+
+def on_document(chat, msg):
+    uid = str(chat)
+    u = user(uid, chat)
+    u["seen"] = now()
+    note_user(uid, msg.get("from") or {})
+    if not is_admin(uid):
+        return tell(uid, "⛔ بارگذاری فایل بازیابی فقط برای ادمین مجاز است.")
+    if uid not in IMPORT_WAIT:
+        return tell(uid, "برای دریافت فایل، ابتدا از پنل ادمین گزینه «📥 بازیابی از فایل/لاگ» را بزن.")
+    return _restore_from_upload(uid, msg.get("document") or {})
+
+
 @route(B_ADMIN, A_PANEL, admin=True)
 def a_panel(uid):
     s = DB["settings"]
@@ -10252,7 +10503,9 @@ def on_text(uid, chat, text, msg):
             if arg and arg == admin_code():
                 if uid not in DB["settings"]["admins"]:
                     DB["settings"]["admins"].append(uid)
-                return menu(uid, "👑 تو حالا ادمین هستی! دکمه‌ی «%s» اضافه شد." % B_ADMIN)
+                    save()
+                clear(uid)
+                return tell(uid, "👑 تو حالا ادمین هستی! پنل مدیریت به منوی اصلی اضافه شد.", main_rows(uid), force=True)
             return menu(uid, "👑 شما ادمین هستید." if admin else "❌ کد اشتباهه.")
         if cmd == "setchannel" and admin:
             if not arg:
@@ -10306,6 +10559,8 @@ def handle_update(upd):
     LAG[chat] = lag
     if lag is not None and lag > 5:
         print("⏱ پیامِ %s با %.0f ثانیه تأخیر به بات رسید" % (chat[-6:], lag))
+    if msg.get("document"):
+        return on_document(chat, msg)
     if msg.get("photo"):
         return on_photo(chat, msg)
     on_text(chat, chat, msg.get("text") or "", msg)
@@ -10329,7 +10584,7 @@ def main():
         print("❌ اول توکن بات رو بذار:\n   BOT_TOKEN=\"توکن\" python main.py")
         sys.exit(1)
     load()
-    print("🔑 کد ادمین (اختیاری، برای /admin):", admin_code())
+    print("🔐 سیستم ارتقای ادمین فعال است؛ کد از WW_ADMIN_CODE خوانده می‌شود.")
     try:
         me = api("getMe").get("result") or {}
         print("✅ متصل شد: @%s" % me.get("username"))
