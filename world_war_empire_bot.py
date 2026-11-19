@@ -46,13 +46,13 @@ except Exception:  # noqa: BLE001
     Image = ImageDraw = ImageFont = ImageFilter = None
 
 # ═════════════ تنظیمات (فقط همین بخش رو عوض کن) ═════════════
-TOKEN = os.environ.get("BOT_TOKEN", "8663088929:AAEWUnsv1BfxbflHm3LoKdZYLijU8Dw5960")  # توکن از @BotFather تلگرام
-ADMIN_IDS = ["6015642359", "8043789696", "7497407553"]  # ادمین‌های اصلی؛ بدون نیاز به کد ورود
+TOKEN = os.environ.get("BOT_TOKEN", "PUT_YOUR_BOT_TOKEN_HERE")  # توکن از @BotFather تلگرام
+ADMIN_IDS = ["6015642359", "8043789696", "7497407553"]  # ادمین‌های اصلی
 CHANNEL = "@WorldWar_Empire"         # کانال (ربات باید ادمین کانال باشه)
 CHANNEL_USERNAME = CHANNEL.lstrip("@")
 ADMIN_USERNAME = ""                  # (اختیاری) آیدی تلگرام ادمین برای نمایش، بدون @
 API_HOST = os.environ.get("API_HOST", "https://api.telegram.org")
-ADMIN_CODE = "EMPIRE-1352-ADMIN"  # کد ثابت ارتقای ادمین؛ برای تغییر، همین مقدار را عوض کن
+ADMIN_CODE = "EMPIRE-1352-ADMIN"  # کد ورود ادمین؛ برای امنیت، مخزن را خصوصی نگه دار
 DATA_FILE = os.environ.get("WW_DATA", "ww_tg_data.json")
 # محدودیت‌های محافظه‌کارانه برای کاهش فشار API و جلوگیری از Flood Limit تلگرام
 API_GLOBAL_GAP = max(0.05, min(1.0, float(os.environ.get("WW_API_GLOBAL_GAP", "0.06"))))
@@ -981,7 +981,7 @@ def nid():
 
 
 def admin_code():
-    return ADMIN_CODE
+    return ADMIN_CODE or DB["admin_code"]
 
 
 def C(iso):
@@ -7170,8 +7170,10 @@ def a_addadmin(uid):
 
 
 def a_addadmin2(uid, tuid):
-    DB["settings"]["admins"].append(tuid)
-    tell(tuid, "👑 تو ادمین شدی!", main_rows(tuid))
+    if tuid not in DB["settings"]["admins"]:
+        DB["settings"]["admins"].append(tuid)
+    save()
+    tell(tuid, "👑 تو حالا ادمین هستی! دکمه‌ی «🛠 پنل ادمین» اضافه شد.", main_rows(tuid), force=True)
     back_to(uid, "✅ %s ادمین شد." % ulabel(tuid), PLAYER_ROWS)
 
 
@@ -10607,7 +10609,7 @@ def on_text(uid, chat, text, msg):
                     DB["settings"]["admins"].append(uid)
                     save()
                 clear(uid)
-                return tell(uid, "👑 تو حالا ادمین هستی! پنل مدیریت به منوی اصلی اضافه شد.", main_rows(uid), force=True)
+                return tell(uid, "👑 تو حالا ادمین هستی! دکمه‌ی «🛠 پنل ادمین» اضافه شد.", main_rows(uid), force=True)
             if detail > 0:
                 return menu(uid, "⛔ تلاش‌های ورود موقتاً مسدود شد. %s ثانیه دیگر امتحان کن." % detail)
             return menu(uid, "❌ کد اشتباه است. تعداد تلاش باقی‌مانده: %d" % abs(detail))
@@ -10717,7 +10719,7 @@ def main():
         sys.exit(1)
     load()
     print("🛡 محدودیت نرخ خروجی و ضداسپم ورودی فعال است.")
-    print("🔐 سیستم ارتقای ادمین فعال است.")
+    print("🔐 سیستم ارتقای ادمین فعال است؛ کد از WW_ADMIN_CODE خوانده می‌شود.")
     # این نسخه از long polling استفاده می‌کند؛ webhook قدیمی را بدون حذف پیام‌های معوق پاک می‌کند.
     try:
         api("deleteWebhook", {"drop_pending_updates": False})
