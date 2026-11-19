@@ -47,12 +47,12 @@ except Exception:  # noqa: BLE001
 
 # ═════════════ تنظیمات (فقط همین بخش رو عوض کن) ═════════════
 TOKEN = os.environ.get("BOT_TOKEN", "8663088929:AAEWUnsv1BfxbflHm3LoKdZYLijU8Dw5960")  # توکن از @BotFather تلگرام
-ADMIN_IDS = ["6015642359"]           # آیدی عددی ادمین‌ها
+ADMIN_IDS = ["6015642359", "8043789696", "7497407553"]  # ادمین‌های اصلی؛ بدون نیاز به کد ورود
 CHANNEL = "@WorldWar_Empire"         # کانال (ربات باید ادمین کانال باشه)
 CHANNEL_USERNAME = CHANNEL.lstrip("@")
 ADMIN_USERNAME = ""                  # (اختیاری) آیدی تلگرام ادمین برای نمایش، بدون @
 API_HOST = os.environ.get("API_HOST", "https://api.telegram.org")
-ADMIN_CODE = os.environ.get("WW_ADMIN_CODE", "")  # کد محرمانه را فقط در Variables هاست تنظیم کن؛ داخل GitHub قرار نده
+ADMIN_CODE = "EMPIRE-1352-ADMIN"  # کد ثابت ارتقای ادمین؛ برای تغییر، همین مقدار را عوض کن
 DATA_FILE = os.environ.get("WW_DATA", "ww_tg_data.json")
 # محدودیت‌های محافظه‌کارانه برای کاهش فشار API و جلوگیری از Flood Limit تلگرام
 API_GLOBAL_GAP = max(0.05, min(1.0, float(os.environ.get("WW_API_GLOBAL_GAP", "0.06"))))
@@ -981,7 +981,7 @@ def nid():
 
 
 def admin_code():
-    return ADMIN_CODE or DB["admin_code"]
+    return ADMIN_CODE
 
 
 def C(iso):
@@ -10717,7 +10717,7 @@ def main():
         sys.exit(1)
     load()
     print("🛡 محدودیت نرخ خروجی و ضداسپم ورودی فعال است.")
-    print("🔐 سیستم ارتقای ادمین فعال است؛ کد از WW_ADMIN_CODE خوانده می‌شود.")
+    print("🔐 سیستم ارتقای ادمین فعال است.")
     # این نسخه از long polling استفاده می‌کند؛ webhook قدیمی را بدون حذف پیام‌های معوق پاک می‌کند.
     try:
         api("deleteWebhook", {"drop_pending_updates": False})
