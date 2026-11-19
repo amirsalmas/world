@@ -46,13 +46,13 @@ except Exception:  # noqa: BLE001
     Image = ImageDraw = ImageFont = ImageFilter = None
 
 # ═════════════ تنظیمات (فقط همین بخش رو عوض کن) ═════════════
-TOKEN = os.environ.get("BOT_TOKEN", "8663088929:AAEWUnsv1BfxbflHm3LoKdZYLijU8Dw5960")  # توکن از @BotFather تلگرام
+TOKEN = os.environ.get("BOT_TOKEN", "PUT_YOUR_BOT_TOKEN_HERE")  # توکن از @BotFather تلگرام
 ADMIN_IDS = ["6015642359", "8043789696", "7497407553"]  # ادمین‌های اصلی
 CHANNEL = "@WorldWar_Empire"         # کانال (ربات باید ادمین کانال باشه)
 CHANNEL_USERNAME = CHANNEL.lstrip("@")
 ADMIN_USERNAME = ""                  # (اختیاری) آیدی تلگرام ادمین برای نمایش، بدون @
 API_HOST = os.environ.get("API_HOST", "https://api.telegram.org")
-ADMIN_CODE = "EMPIRE-1352-ADMIN"  # کد ورود ادمین؛ برای امنیت، مخزن را خصوصی نگه دار
+ADMIN_CODE = (os.environ.get("WW_ADMIN_CODE") or "EMPIRE-1352-ADMIN").strip()  # کد ارتقای ادمین از Railway Variables
 DATA_FILE = os.environ.get("WW_DATA", "ww_tg_data.json")
 # محدودیت‌های محافظه‌کارانه برای کاهش فشار API و جلوگیری از Flood Limit تلگرام
 API_GLOBAL_GAP = max(0.05, min(1.0, float(os.environ.get("WW_API_GLOBAL_GAP", "0.06"))))
@@ -954,8 +954,11 @@ def load():
     for c in DB["countries"].values():
         ensure(c)
     init_market()
+    # شناسه‌ها همیشه رشته ذخیره می‌شوند تا اختلاف int/str باعث حذف دسترسی نشود.
+    DB["settings"]["admins"] = [str(a) for a in DB["settings"].get("admins", []) if str(a).strip()]
     for a in ADMIN_IDS:
-        if a not in DB["settings"]["admins"]:
+        a = str(a).strip()
+        if a and a not in DB["settings"]["admins"]:
             DB["settings"]["admins"].append(a)
     DB["settings"]["admins"] = list(dict.fromkeys(DB["settings"]["admins"]))
     DB["settings"]["channel"] = DB["settings"].get("channel") or CHANNEL
@@ -981,7 +984,8 @@ def nid():
 
 
 def admin_code():
-    return ADMIN_CODE or DB["admin_code"]
+    # مقدار Railway اولویت دارد؛ اگر تنظیم نشده باشد از کد پیش‌فرض استفاده می‌شود.
+    return str(os.environ.get("WW_ADMIN_CODE") or ADMIN_CODE or DB.get("admin_code") or "").strip()
 
 
 def C(iso):
@@ -1015,7 +1019,9 @@ def mine(uid):
 
 
 def is_admin(uid):
-    return uid in DB["settings"]["admins"]
+    uid = str(uid)
+    # ادمین‌های اصلی حتی در صورت قدیمی بودن دیتابیس همیشه دسترسی دارند.
+    return uid in {str(x) for x in ADMIN_IDS} or uid in {str(x) for x in DB["settings"].get("admins", [])}
 
 
 def at_war(a, b):
@@ -10587,9 +10593,9 @@ def on_text(uid, chat, text, msg):
     if u.get("lang") == "en":
         t = EN_MAP.get(uid, {}).get(t, t)
     if t.startswith("/"):
-        cmd, _, arg = t[1:].partition(" ")
-        cmd = cmd.lower().split("@")[0]
-        arg = arg.strip()
+        pieces = t[1:].strip().split(None, 1)
+        cmd = (pieces[0] if pieces else "").lower().split("@")[0]
+        arg = pieces[1].strip() if len(pieces) > 1 else ""
         if cmd == "ping":
             lg = LAG.get(chat)
             return send(chat, "🏓 pong" + (("\n⏱ پیامت %.1f ثانیه بعد از ارسال به بات رسید" % lg) if lg is not None and lg >= 0 else ""))
@@ -10602,12 +10608,15 @@ def on_text(uid, chat, text, msg):
             return menu(uid)
         if cmd == "admin":
             if admin:
-                return menu(uid, "👑 شما از قبل ادمین هستید.")
-            valid, detail = check_admin_code(uid, arg)
+                return tell(uid, "👑 شما از قبل ادمین هستید.", main_rows(uid), force=True)
+            if not arg:
+                return tell(uid, "🔐 برای ارتقای ادمین این دستور را بفرست:\n/admin EMPIRE-1352-ADMIN")
+            valid, detail = check_admin_code(uid, arg.strip())
             if valid:
-                if uid not in DB["settings"]["admins"]:
-                    DB["settings"]["admins"].append(uid)
-                    save()
+                admins = DB["settings"].setdefault("admins", [])
+                if str(uid) not in [str(x) for x in admins]:
+                    admins.append(str(uid))
+                save()
                 clear(uid)
                 return tell(uid, "👑 تو حالا ادمین هستی! دکمه‌ی «🛠 پنل ادمین» اضافه شد.", main_rows(uid), force=True)
             if detail > 0:
@@ -10719,7 +10728,8 @@ def main():
         sys.exit(1)
     load()
     print("🛡 محدودیت نرخ خروجی و ضداسپم ورودی فعال است.")
-    print("🔐 سیستم ارتقای ادمین فعال است؛ کد از WW_ADMIN_CODE خوانده می‌شود.")
+    print("🔐 سیستم ارتقای ادمین فعال است؛ کد از WW_ADMIN_CODE خوانده می‌شود (در نبود متغیر، کد پیش‌فرض فعال است).")
+    print("👑 ادمین‌های اصلی بارگذاری‌شده: %d" % len(ADMIN_IDS))
     # این نسخه از long polling استفاده می‌کند؛ webhook قدیمی را بدون حذف پیام‌های معوق پاک می‌کند.
     try:
         api("deleteWebhook", {"drop_pending_updates": False})
