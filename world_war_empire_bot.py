@@ -1,4 +1,4 @@
-
+# -*- coding: utf-8 -*-
 """
 🌍 ربات «جنگ جهانی ✦ امپراتوری» — نسخه‌ی تلگرام (آپدیت بزرگ)
 ════════════════════════════════════════════════════════════
@@ -14,12 +14,10 @@
 ✦ هر گزارش توی کانال با عکس مربوطه؛ بیانیه‌ی عکس‌دار؛ ادمین برای هر نوع گزارش عکس تنظیم می‌کنه
 ✦ پنل ادمین: تغییر پول/منابع هر کشور، فعال‌سازی پک، مجوزها، عکس‌ها، بازار و بانک، قوانین
 
-بدون فیلترشکن: اگه تلگرام مستقیم باز نشه، ربات خودش سریع‌ترین پروکسی عمومی رو پیدا می‌کنه.
-
 راه‌اندازی:
-  1) pip install "requests[socks]" pillow        (pillow برای ساخت خودکار عکس گزارش‌هاست؛ اختیاری)
+  1) pip install requests pillow                 (pillow برای ساخت خودکار عکس گزارش‌هاست؛ اختیاری)
   2) توی تلگرام به @BotFather پیام بده، بات بساز و توکن بگیر
-  3) BOT_TOKEN="توکن" python world_war_empire_bot.py
+  3) BOT_TOKEN="توکن" python main.py
   4) بات رو «ادمین کانال» کن (دسترسی ارسال پیام).
 """
 import io
@@ -37,26 +35,18 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
-from log_analyzer import (
-    handle_admin_log_upload,
-    get_cached_log,
-    search_lines,
-    format_search_results,
-)
+
 try:  # برای ساخت خودکار عکس گزارش‌ها (اختیاری)
     from PIL import Image, ImageDraw, ImageFont, ImageFilter
 except Exception:  # noqa: BLE001
     Image = ImageDraw = ImageFont = ImageFilter = None
 
 # ═════════════ تنظیمات (فقط همین بخش رو عوض کن) ═════════════
-TOKEN = os.environ.get("BOT_TOKEN", "8663088929:AAEWUnsv1BfxbflHm3LoKdZYLijU8Dw5960")  # توکن از @BotFather تلگرام
-OWNER_ID = "6015642359"              # 👑 مالک اصلی ربات
-ADMIN_IDS = ["8043789696"]           # 🛠 ادمین‌ها
+TOKEN = os.environ.get("BOT_TOKEN", "PUT_YOUR_BOT_TOKEN_HERE")  # توکن از @BotFather تلگرام
+ADMIN_IDS = ["6015642359"]           # آیدی عددی ادمین‌ها
 CHANNEL = "@WorldWar_Empire"         # کانال (ربات باید ادمین کانال باشه)
 CHANNEL_USERNAME = CHANNEL.lstrip("@")
 ADMIN_USERNAME = ""                  # (اختیاری) آیدی تلگرام ادمین برای نمایش، بدون @
-PROXY = os.environ.get("PROXY", "")  # پروکسی دلخواه مثل socks5h://1.2.3.4:1080 (خالی = خودکار)
-AUTO_PROXY = os.environ.get("AUTO_PROXY", "1") != "0"   # 0 = پروکسی عمومی خودکار خاموش
 API_HOST = os.environ.get("API_HOST", "https://api.telegram.org")
 ADMIN_CODE = ""                      # (اختیاری) برای دستور /admin؛ خالی = خودکار
 DATA_FILE = os.environ.get("WW_DATA", "ww_tg_data.json")
@@ -65,6 +55,7 @@ STATEMENT_COOLDOWN = 180                                      # ثانیه بی�
 IMG_DIR = os.environ.get("WW_IMAGES", "ww_images")            # (اختیاری) پوشه‌ی عکس گزارش‌ها: war.jpg, peace.png ...
 INCOME_MULT = float(os.environ.get("WW_INCOME", "10"))      # ضریب حقوق/درآمد (۱۰ = ده برابر نسخه‌ی قبل)
 # ═════════════════════════════════════════════════════════════
+
 try:  # فقط IPv4؛ روی بعضی شبکه‌ها IPv6 باعث تأخیر چند ده ثانیه‌ای می‌شه
     import urllib3.util.connection as _u3c
     _u3c.allowed_gai_family = lambda: socket.AF_INET
@@ -952,23 +943,15 @@ def load():
         ensure(c)
     init_market()
     for a in ADMIN_IDS:
-     ADMIN_WAITING_LOG = set()
-ADMIN_WAITING_SEARCH = set()
-      if a not in DB["settings"]["admins"]:
+        if a not in DB["settings"]["admins"]:
             DB["settings"]["admins"].append(a)
     DB["settings"]["admins"] = list(dict.fromkeys(DB["settings"]["admins"]))
     DB["settings"]["channel"] = DB["settings"].get("channel") or CHANNEL
     if not DB.get("admin_code"):
         DB["admin_code"] = "".join(random.choice("abcdefghjkmnpqrstuvwxyz23456789") for _ in range(8))
-    # ─── مالک همیشه ادمین هست ───
-    if OWNER_ID and OWNER_ID not in DB["settings"]["admins"]:
-        DB["settings"]["admins"].append(OWNER_ID)
     save()
 
 
-def save():
-    tmp = DATA_FILE + ".tmp"
-    ...
 def save():
     tmp = DATA_FILE + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
@@ -1015,15 +998,7 @@ def mine(uid):
     return c if c and c["alive"] and c["owner"] == uid else None
 
 
-def is_owner(uid):
-    """مالک ربات"""
-    return uid == OWNER_ID
-
-
 def is_admin(uid):
-    """ادمین یا مالک"""
-    if uid == OWNER_ID:
-        return True
     return uid in DB["settings"]["admins"]
 
 
@@ -1340,179 +1315,9 @@ def spark(vals, n=24):
 
 
 
-# ═════════════ ارتباط با تلگرام (+ پروکسی عمومی خودکار) ═════════════
+# ═════════════ ارتباط با تلگرام ═════════════
 class ApiError(Exception):
     pass
-
-
-PX = {"cur": None, "pool": [], "bad": set(), "scanning": False}
-PX_LOCK = threading.RLock()
-PROXY_SOURCES = [  # لیست‌های عمومی پروکسی (ip:port)
-    ("socks5h", "https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/socks5/data.txt"),
-    ("socks5h", "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/socks5.txt"),
-    ("socks5h", "https://cdn.jsdelivr.net/gh/monosans/proxy-list@main/proxies/socks5.txt"),
-    ("socks5h", "https://raw.githubusercontent.com/hookzof/socks5_list/master/proxy.txt"),
-    ("http", "https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/http/data.txt"),
-    ("http", "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt"),
-    ("http", "https://cdn.jsdelivr.net/gh/monosans/proxy-list@main/proxies/http.txt"),
-    ("socks4", "https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/socks4/data.txt"),
-]
-
-
-def px_norm(p):
-    p = (p or "").strip()
-    return ("socks5h://" + p) if p and "://" not in p else p
-
-
-def px_dict(p):
-    return {"http": p, "https": p} if p else None
-
-
-def px_name(p):
-    return re.sub(r"^.*?://(.*@)?", "", p) if p else "مستقیم"
-
-
-def have_socks():
-    try:
-        import socks  # noqa: F401
-        return True
-    except ImportError:
-        return False
-
-
-def px_check(p, timeout=7):
-    """True اگه از این مسیر به سرور تلگرام می‌رسیم (با توکن تستی؛ توکن واقعی استفاده نمی‌شه)."""
-    try:
-        r = requests.get("%s/bot123456:CHECK/getMe" % API_HOST, proxies=px_dict(p), timeout=timeout)
-        js = r.json()
-        return js.get("ok") is False and js.get("error_code") in (401, 404)
-    except Exception:  # noqa: BLE001
-        return False
-
-
-def px_timed(p, timeout=7):
-    t0 = time.time()
-    return (p, time.time() - t0) if px_check(p, timeout) else None
-
-
-def px_candidates():
-    srcs = list(PROXY_SOURCES)
-    for u in [x.strip() for x in os.environ.get("PROXY_LISTS", "").split(",") if x.strip()]:
-        srcs.insert(0, ("socks5h", u))
-    socks_ok = have_socks()
-    out, seen = [], set()
-    for scheme, url in srcs:
-        if scheme.startswith("socks") and not socks_ok:
-            continue
-        try:
-            txt = requests.get(url, timeout=12).text
-        except Exception:  # noqa: BLE001
-            continue
-        part = []
-        for ip, port in re.findall(r"(\d{1,3}(?:\.\d{1,3}){3}):(\d{2,5})", txt):
-            p = "%s://%s:%s" % (scheme, ip, port)
-            if p not in seen and p not in PX["bad"]:
-                seen.add(p)
-                part.append(p)
-        random.shuffle(part)
-        out += part[:250]
-    random.shuffle(out)
-    return out
-
-
-def px_scan(want=5, budget=70, quiet=False):
-    """پروکسی‌های عمومی رو همزمان (۱۲۸ تا) تست می‌کنه؛ اول فقط سریع‌ها (زیر ۳.۵ ثانیه)، بعد کندترها."""
-    if not quiet:
-        print("🔎 دارم سریع‌ترین پروکسی عمومی رو پیدا می‌کنم (حداکثر ~۱ دقیقه) ...")
-    cands = px_candidates()
-    if not quiet:
-        print("   %d پروکسی کاندید؛ دارم تست می‌کنم ..." % len(cands))
-    found = []
-    for to, bud in ((3.5, budget * 0.55), (8.0, budget * 0.45)):
-        ex = ThreadPoolExecutor(max_workers=128)
-        try:
-            futs = [ex.submit(px_timed, p, to) for p in cands]
-            for f in as_completed(futs, timeout=bud):
-                r = f.result()
-                if r:
-                    found.append(r)
-                    if len(found) >= want:
-                        break
-        except Exception:  # noqa: BLE001  (تموم شدن زمان)
-            pass
-        finally:
-            ex.shutdown(wait=False, cancel_futures=True)
-        if found:
-            break
-    return [p for p, _ in sorted(found, key=lambda x: x[1])]
-
-
-def px_refill_async():
-    with PX_LOCK:
-        if PX["scanning"] or not AUTO_PROXY:
-            return
-        PX["scanning"] = True
-
-    def run():
-        try:
-            found = px_scan(quiet=True)
-            with PX_LOCK:
-                for p in found:
-                    if p not in PX["pool"] and p != PX["cur"]:
-                        PX["pool"].append(p)
-        finally:
-            PX["scanning"] = False
-
-    threading.Thread(target=run, daemon=True).start()
-
-
-def px_init():
-    if px_check(None, 8):
-        print("✅ اتصال مستقیم به تلگرام برقرار است (پروکسی لازم نیست).")
-        PX["cur"] = None
-        return True
-    user_p = px_norm(PROXY)
-    if user_p:
-        print("🌐 تست پروکسی تنظیم‌شده:", px_name(user_p))
-        if px_check(user_p, 12):
-            PX["cur"], PX["pool"] = user_p, [user_p]
-            print("✅ با پروکسی وصل شد.")
-            return True
-        print("⚠️ این پروکسی جواب نداد.")
-    if AUTO_PROXY:
-        if not have_socks():
-            print("ℹ️ برای پروکسی SOCKS بهتره اجرا کنی:  pip install \"requests[socks]\"")
-        found = px_scan()
-        if found:
-            PX["pool"], PX["cur"] = found, found[0]
-            print("✅ پروکسی پیدا شد: %s (+%d جایگزین)" % (px_name(found[0]), len(found) - 1))
-            return True
-        print("❌ پروکسی کارکردی پیدا نشد (لیست‌ها دانلود نشدن یا همه مرده‌ان).")
-    return False
-
-
-def px_failed(bad):
-    """وقتی مسیر فعلی خراب شد: بعدی رو انتخاب می‌کنه یا دوباره می‌گرده."""
-    with PX_LOCK:
-        if PX["cur"] != bad:
-            return
-        if bad:
-            PX["bad"].add(bad)
-            PX["pool"] = [p for p in PX["pool"] if p != bad]
-        if PX["pool"]:
-            PX["cur"] = PX["pool"][0]
-            print("🔁 پروکسی عوض شد:", px_name(PX["cur"]))
-            if len(PX["pool"]) <= 2:
-                px_refill_async()
-            return
-        if not AUTO_PROXY:
-            return
-        found = px_scan()
-        if found:
-            PX["pool"], PX["cur"] = found, found[0]
-            print("🔁 پروکسی جدید: %s (+%d جایگزین)" % (px_name(found[0]), len(found) - 1))
-        else:
-            print("⚠️ هنوز پروکسی کارکردی پیدا نشد؛ بعداً دوباره تلاش می‌کنم.")
 
 
 def _session():
@@ -1526,15 +1331,14 @@ def api(method, params=None, read_timeout=20):
     url = "%s/bot%s/%s" % (API_HOST, TOKEN, method)
     last = None
     for _ in range(4):
-        p = PX["cur"]
         t0 = time.time()
         try:
-            r = _session().post(url, json=params or {}, proxies=px_dict(p), timeout=(8, read_timeout))
+            r = _session().post(url, json=params or {}, timeout=(8, read_timeout))
             js = r.json()
         except (requests.RequestException, ValueError) as e:
             last = e
             _TL.s = None
-            px_failed(p)
+            time.sleep(1.5)
             continue
         dt = time.time() - t0
         if dt > 4 and method != "getUpdates":
@@ -1609,14 +1413,13 @@ def api_form(method, data, files, read_timeout=40):
     url = "%s/bot%s/%s" % (API_HOST, TOKEN, method)
     last = None
     for _ in range(3):
-        p = PX["cur"]
         try:
-            r = _session().post(url, data=data, files=files, proxies=px_dict(p), timeout=(8, read_timeout))
+            r = _session().post(url, data=data, files=files, timeout=(8, read_timeout))
             js = r.json()
         except (requests.RequestException, ValueError) as e:
             last = e
             _TL.s = None
-            px_failed(p)
+            time.sleep(1.5)
             continue
         if js.get("ok"):
             return js
@@ -3629,9 +3432,8 @@ DIP_ROWS = [[B_TRADE, B_ALLY], [B_BREAK, B_AID], [B_UNION, B_SANC], [B_BACK]]
 ECO_ROWS = [[B_UP_ECO, B_UP_TECH], [B_UP_FORT, B_FACT], [B_MARKET, B_RES], [B_POLICY, B_SALARY], [B_BACK]]
 ADMIN_ROWS = [[A_REQ, A_COUNTRIES], [A_MONEY, A_PACKADM], [A_PLAYERS, A_RES], [A_RULES, A_IMG],
               [A_ECOADM, A_ANN], [A_EVENT, A_SET], [A_STATS], [B_BACK]]
-B_CHANGE = "🔄 درخواست تغییر کشور"
 
-A_OWNER = "👑 پنل مالک"
+
 def main_rows(uid):
     if mine(uid):
         rows = [[B_MY, B_SHOP], [B_WAR, B_DIP], [B_ECO, B_BUILD], [B_BANK, B_CRYPTO], [B_UNION, B_PACKS],
@@ -3639,9 +3441,7 @@ def main_rows(uid):
     else:
         rows = [[B_REQ], [B_CUP, B_RANK]]
     rows.append([B_LANG])
-    if is_owner(uid):
-        rows.append([A_OWNER, B_ADMIN])
-    elif is_admin(uid):
+    if is_admin(uid):
         n = len(DB["requests"])
         rows.append([B_ADMIN] + (["📥 درخواست‌ها (%d)" % n] if n else []))
     return rows
@@ -6826,87 +6626,7 @@ def r_news(uid):
     L.append("\n📢 همه‌ی اخبار: @" + CHANNEL_USERNAME)
     tell(uid, "\n".join(L), main_rows(uid))
 
-# ═════════════ پنل مالک ═════════════
-A_OWNER = "👑 پنل مالک"
-OW_ADMINS, OW_ADD_ADM, OW_DEL_ADM = "👥 مدیریت ادمین‌ها", "➕ افزودن ادمین", "🗑 حذف ادمین"
-OWNER_ROWS = [[OW_ADMINS], [OW_ADD_ADM, OW_DEL_ADM], [A_PANEL]]
 
-
-def owner_only(uid):
-    if not is_owner(uid):
-        tell(uid, "⛔ این بخش فقط برای مالک رباته.")
-        return False
-    return True
-
-
-@route(A_OWNER, admin=True)
-def a_owner(uid):
-    if not owner_only(uid):
-        return
-    admins = DB["settings"]["admins"]
-    L = ["👑 پنل مالک", "━━━━━━━━━━━━", "👤 مالک: %s" % ulabel(OWNER_ID),
-         "👥 تعداد ادمین‌ها: %d" % len(admins), "", "🛠 ادمین‌های فعلی:"]
-    for a in admins:
-        L.append("  • %s" % ulabel(a))
-    tell(uid, "\n".join(L), OWNER_ROWS)
-
-
-@route(OW_ADD_ADM, admin=True)
-def ow_add_adm(uid):
-    if not owner_only(uid):
-        return
-    ask(uid, "➕ آیدی عددی کاربری که می‌خوای ادمین کنی رو بفرست:", lambda t: ow_add_adm_do(uid, t))
-
-
-def ow_add_adm_do(uid, t):
-    if not owner_only(uid):
-        return
-    aid = en_digits(t).strip()
-    if not aid.isdigit():
-        return back_to(uid, "❌ آیدی باید عدد باشه.", OWNER_ROWS)
-    if aid in DB["settings"]["admins"]:
-        return back_to(uid, "✅ این کاربر از قبل ادمینه.", OWNER_ROWS)
-    DB["settings"]["admins"].append(aid)
-    tell(aid, "👑 تو توسط مالک ربات ادمین شدی!")
-    back_to(uid, "✅ %s ادمین شد." % ulabel(aid), OWNER_ROWS)
-
-
-@route(OW_DEL_ADM, admin=True)
-def ow_del_adm(uid):
-    if not owner_only(uid):
-        return
-    admins = [a for a in DB["settings"]["admins"] if a != OWNER_ID]
-    if not admins:
-        return back_to(uid, "ادمینی برای حذف نیست.", OWNER_ROWS)
-    rows = [[ulabel(a)] for a in admins]
-    labels = {ulabel(a): a for a in admins}
-
-    def h(t):
-        aid = labels.get(t)
-        if not aid:
-            return ow_del_adm(uid)
-        if aid not in DB["settings"]["admins"]:
-            return back_to(uid, "این کاربر ادمین نیست.", OWNER_ROWS)
-        DB["settings"]["admins"].remove(aid)
-        tell(aid, "⛔ دسترسی ادمینی شما توسط مالک ربات لغو شد.")
-        back_to(uid, "🗑 %s از ادمین‌ها حذف شد." % ulabel(aid), OWNER_ROWS)
-
-    ask(uid, "🗑 کدوم ادمین حذف بشه؟", h, rows)
-
-
-@route(OW_ADMINS, admin=True)
-def ow_admins(uid):
-    if not owner_only(uid):
-        return
-    admins = DB["settings"]["admins"]
-    L = ["👥 مدیریت ادمین‌ها", ""]
-    if not admins:
-        L.append("هنوز ادمینی نیست.")
-    for i, a in enumerate(admins, 1):
-        L.append("%d. %s" % (i, ulabel(a)))
-    back_to(uid, "\n".join(L), OWNER_ROWS)
-# ═════════════════════════════════════════════════════════════
-  
 # ═════════════ پنل ادمین ═════════════
 @route(B_ADMIN, A_PANEL, admin=True)
 def a_panel(uid):
@@ -7807,7 +7527,7 @@ TR_STATE = {"ok": None, "err": ""}
 
 
 def _tr_call(name, text, px):
-    pxs = px_dict(px) if px else None
+    pxs = None
     if name == "gapi":
         r = requests.post("https://translate.googleapis.com/translate_a/single", params={"client": "gtx", "sl": "auto", "tl": "en", "dt": "t"},
                           data={"q": text}, timeout=(5, 12), proxies=pxs)
@@ -7843,7 +7563,7 @@ def _gtx(text):
         order.insert(0, good)
     last = None
     for name in order:
-        for px in (None, PX.get("cur")):
+        for px in (None,):
             if px is None and name != order[0] and TR_STATE.get("direct_bad", {}).get(name):
                 continue
             try:
@@ -7854,8 +7574,6 @@ def _gtx(text):
                     return out
             except Exception as e:  # noqa: BLE001
                 last = "%s: %s" % (name, repr(e)[:100])
-            if px is None and not PX.get("cur"):
-                break
     TR_STATE["err"] = last or "unknown"
     print("translate failed:", TR_STATE["err"])
     return None
@@ -7898,7 +7616,9 @@ def tr_en(text):
 
 def english_of(text):
     """ترجمه‌ی انگلیسی متن (یا None)."""
-    if not DB["settings"].get("bilingual", True) or not FA_RE.search(text):
+    if True:  # گزارش‌های کانال فقط فارسی‌اند (ترجمه‌ی انگلیسی کانال حذف شد)
+        return None
+    if not FA_RE.search(text):
         return None
     return tr_en(text)
 
@@ -8369,10 +8089,10 @@ def ext_approve(uid, r):
 # ───── بانک‌ها و کارت به کارت ─────
 # حداقل/حداکثر انتقال به «دلار»؛ کارمزد به صورت کسری (۰.۰۳٪ = 0.0003)
 BANKS = {
-    "blue": {"name": "بلو بانک", "pre": "6219-86", "min": 1_000, "max": 500_000_000_000, "fee": 0.0003, "found": 1_000_000},
-    "city": {"name": "سیتی‌بانک", "pre": "5287-34", "min": 500_000_000_000, "max": 1_000_000_000_000, "fee": 0.0005, "found": 500_000_000},
-    "tej": {"name": "بانک تجارت", "pre": "5859-63", "min": 100_000_000, "max": 1_000_000_000_000, "fee": 0.0004, "found": 100_000_000},
-    "arsh": {"name": "بانک ارشیا", "pre": "1111-11", "min": 100_000_000, "max": 100_000_000_000_000, "fee": 0.0001, "found": 1_000_000_000},
+    "blue": {"name": "بلو بانک", "pre": "6219-86", "min": 1_000, "max": 500_000_000_000, "fee": 0.0003, "found": 500_000},
+    "city": {"name": "سیتی‌بانک", "pre": "5287-34", "min": 500_000_000_000, "max": 1_000_000_000_000, "fee": 0.0005, "found": 2_000_000},
+    "tej": {"name": "بانک تجارت", "pre": "5859-63", "min": 100_000_000, "max": 1_000_000_000_000, "fee": 0.0004, "found": 1_000_000},
+    "arsh": {"name": "بانک ارشیا", "pre": "1111-11", "min": 100_000_000, "max": 100_000_000_000_000, "fee": 0.0001, "found": 3_000_000},
 }
 VIP_CARDS = {
     "blue": [("6219-8666-6666-6666", 10000), ("6219-8600-0000-0000", 10000)],
@@ -8734,19 +8454,54 @@ def usd_fmt(x):
     return ("{:.10f}".format(x)).rstrip("0").rstrip(".")
 
 
+CG_IDS = {"BTC": "bitcoin", "ETH": "ethereum", "DOGE": "dogecoin", "SOL": "solana"}
+
+
+def cg_prices():
+    """قیمت واقعی از CoinGecko؛ اگه در دسترس نبود None."""
+    try:
+        r = requests.get("https://api.coingecko.com/api/v3/simple/price",
+                         params={"ids": ",".join(CG_IDS.values()), "vs_currencies": "usd", "include_24hr_change": "true"}, timeout=8)
+        js = r.json()
+        return {sym: (float(js[i]["usd"]), float(js[i].get("usd_24h_change") or 0.0)) for sym, i in CG_IDS.items()}
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def crypto_report():
     rep = EXT()["rep"]
     prev = rep.get("crypto_prev", {})
-    L = ["📊 صرافی جهانی | بازار کریپتو", "🌐 گزارش بازار ارز دیجیتال | ساعت %s" % tnow().strftime("%H:%M"), "", "━━━━━━━━━━━━━━━━━━━━", ""]
+    real = cg_prices()
+    L = ["📊 صرافی جهانی | بازار کریپتو", "🌐 گزارش ارز دیجیتال | ساعت %s" % tnow().strftime("%H:%M"), "━━━━━━━━━━━━━━━━━━━━"]
     cur = {}
     for sym, nm in COIN_ORDER:
-        p = M2D(coin_price(sym))
+        if real:
+            p, ch = real[sym]
+        else:
+            p = M2D(coin_price(sym))
+            o = prev.get(sym)
+            ch = (p / o - 1) * 100 if o else 0.0
         cur[sym] = p
-        o = prev.get(sym)
-        ch = (p / o - 1) * 100 if o else 0.0
         L += [nm, "$%s %s %.2f%%" % (usd_fmt(p), "▲" if ch >= 0 else "▼", abs(ch)), ""]
-    L += ["━━━━━━━━━━━━━━━━━━━━", "", "📡 منبع: بازار کریپتو جهانی", "#کریپتو"]
+    L += ["━━━━━━━━━━━━━━━━━━━━", "📡 منبع: " + ("بازار عمومی CoinGecko" if real else "بازار کریپتو جهانی"),
+          "⚠️ اطلاعات نمایشی‌اند؛ دارایی و معاملهٔ واقعی نیستند.", "#کریپتو"]
     rep["crypto_prev"] = cur
+    return "\n".join(L)
+
+
+def rank_report():
+    cs = [c for c in DB["countries"].values() if c["owner"] and c["alive"]]
+    if not cs:
+        return None
+    top = sorted(cs, key=score, reverse=True)[:10]
+    L = ["🏆 رده‌بندی ساعتی فرماندهان", "━━━━━━━━━━━━━━━━━━"]
+    for i, c in enumerate(top, 1):
+        L.append("%d. %s — ⭐ %s | 💰 %s" % (i, cname(c), "{:,.2f}".format(score(c)).rstrip("0").rstrip("."), dol(c["money"])))
+    dep = sorted(cs, key=dep_total, reverse=True)[:10]
+    L += ["", "🏦 برترین سپرده‌گذاران بانک جهانی:"]
+    for i, c in enumerate(dep, 1):
+        L.append("%d. %s — %s دلار" % (i, cname(c), dol(dep_total(c))))
+    L += ["", "#رده_بندی"]
     return "\n".join(L)
 
 
@@ -8772,6 +8527,12 @@ def report_tick(t):
         txt = crypto_report()
         if not first:
             announce(txt, cat="crypto")
+    if t - rep.get("rank_t", 0) >= 3600:
+        first = not rep.get("rank_t")
+        rep["rank_t"] = t
+        txt = rank_report()
+        if txt and not first:
+            announce(txt, cat="economy")
     if t - rep.get("econ_t", 0) >= 12 * 3600:
         first = not rep.get("econ_t")
         rep["econ_t"] = t
@@ -8904,7 +8665,6 @@ def a_hreset2(uid, path, when, t):
 # ───── ردیف‌های پنل ادمین (اضافه‌شده) ─────
 ADMIN_ROWS.insert(-2, [A_WARS, A_UN])
 ADMIN_ROWS.insert(-2, [A_BANKADM, A_BKP])
-ADMIN_ROWS.insert(-2, [A_LANG])
 
 
 
@@ -9711,15 +9471,15 @@ CP_MY, CP_BRACKET, CP_TEAMS, CP_UP, CP_LUCK, CP_PRIZE, CP_RULES = ("⚽ مساب
 CP_REG, CP_UNREG = "🏆 ثبت‌نام در جام جهانی", "❌ انصراف"
 WC_MAXPW = 200
 MAXLUCK = 100
-WC_UPG = [("🏃 تمرین", "🏃 تمرین بازیکنان", 2, 500_000_000), ("🧠 تاکتیک", "🧠 تاکتیک تیم", 3, 2_000_000_000),
-          ("💪 بدنسازی", "💪 بدنسازی حرفه‌ای", 4, 500_000_000_000), ("⚡ اردو", "⚡ اردوی آماده‌سازی", 5, 1_000_000_000_000),
-          ("👨‍🏫 مربی", "👨‍🏫 مربی حرفه‌ای", 7, 1_000_000_000_000), ("🏟️ مرکز تمرین", "🏟️ مرکز تمرینی پیشرفته", 10, 300_000_000_000)]
-WC_LUCKS = [("🍀 معمولی", "🍀 شانس معمولی", 1, 200_000_000_000), ("🍀 خوب", "🍀 شانس خوب", 3, 600_000_000_000),
-            ("🍀 عالی", "🍀 شانس عالی", 5, 1_000_000_000_000), ("🍀 ویژه", "🍀 شانس ویژه", 10, 3_000_000_000_000),
-            ("🍀 افسانه‌ای", "🍀 شانس افسانه‌ای", 20, 6_000_000_000_000)]
-WC_PRIZE = {"champ": 50_000_000_000_000, "second": 30_000_000_000_000, "third": 15_000_000_000_000,
-            "sf": 3_000_000_000_000, "qf": 1_000_000_000_000, "r16": 500_000_000_000, "r32": 450_000_000_000}
-WC_WIN = 5_000_000
+WC_UPG = [("🏃 تمرین", "🏃 تمرین بازیکنان", 2, 20_000_000), ("🧠 تاکتیک", "🧠 تاکتیک تیم", 3, 60_000_000),
+          ("💪 بدنسازی", "💪 بدنسازی حرفه‌ای", 4, 150_000_000), ("⚡ اردو", "⚡ اردوی آماده‌سازی", 5, 250_000_000),
+          ("👨‍🏫 مربی", "👨‍🏫 مربی حرفه‌ای", 7, 400_000_000), ("🏟️ مرکز تمرین", "🏟️ مرکز تمرینی پیشرفته", 10, 600_000_000)]
+WC_LUCKS = [("🍀 معمولی", "🍀 شانس معمولی", 1, 50_000_000), ("🍀 خوب", "🍀 شانس خوب", 3, 140_000_000),
+            ("🍀 عالی", "🍀 شانس عالی", 5, 220_000_000), ("🍀 ویژه", "🍀 شانس ویژه", 10, 400_000_000),
+            ("🍀 افسانه‌ای", "🍀 شانس افسانه‌ای", 20, 700_000_000)]
+WC_PRIZE = {"champ": 5_000_000_000, "second": 3_000_000_000, "third": 1_500_000_000,
+            "sf": 600_000_000, "qf": 300_000_000, "r16": 150_000_000, "r32": 100_000_000}
+WC_WIN = 10_000_000
 SLOTS = [18, 20, 22]
 STAGE_FA = {2: "فینال", 4: "نیمه‌نهایی", 8: "یک‌چهارم نهایی", 16: "یک‌هشتم نهایی", 32: "یک‌شانزدهم نهایی"}
 A_CUP = "🏆 مدیریت جام جهانی"
@@ -10566,12 +10326,10 @@ def safe_handle(upd):
 
 def main():
     if TOKEN.startswith("PUT_"):
-        print("❌ اول توکن بات رو بذار:\n   BOT_TOKEN=\"توکن\" python world_war_empire_bot.py")
+        print("❌ اول توکن بات رو بذار:\n   BOT_TOKEN=\"توکن\" python main.py")
         sys.exit(1)
     load()
     print("🔑 کد ادمین (اختیاری، برای /admin):", admin_code())
-    if not px_init():
-        print("⚠️ فعلاً به تلگرام وصل نشدم؛ ربات تلاش می‌کنه خودش راهی پیدا کنه ...")
     try:
         me = api("getMe").get("result") or {}
         print("✅ متصل شد: @%s" % me.get("username"))
