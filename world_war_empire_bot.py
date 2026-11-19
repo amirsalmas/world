@@ -22,8 +22,10 @@
 """
 import io
 import json
+import hmac
 import base64
 import zlib
+from collections import defaultdict, deque
 import math
 import os
 import queue
@@ -44,7 +46,7 @@ except Exception:  # noqa: BLE001
     Image = ImageDraw = ImageFont = ImageFilter = None
 
 # ═════════════ تنظیمات (فقط همین بخش رو عوض کن) ═════════════
-TOKEN = os.environ.get("BOT_TOKEN", "8663088929:AAEWUnsv1BfxbflHm3LoKdZYLijU8Dw5960")  # توکن از @BotFather تلگرام
+TOKEN = os.environ.get("BOT_TOKEN", "PUT_YOUR_BOT_TOKEN_HERE")  # توکن از @BotFather تلگرام
 ADMIN_IDS = ["6015642359"]           # آیدی عددی ادمین‌ها
 CHANNEL = "@WorldWar_Empire"         # کانال (ربات باید ادمین کانال باشه)
 CHANNEL_USERNAME = CHANNEL.lstrip("@")
@@ -52,6 +54,13 @@ ADMIN_USERNAME = ""                  # (اختیاری) آیدی تلگرام ا
 API_HOST = os.environ.get("API_HOST", "https://api.telegram.org")
 ADMIN_CODE = os.environ.get("WW_ADMIN_CODE", "")  # کد محرمانه را فقط در Variables هاست تنظیم کن؛ داخل GitHub قرار نده
 DATA_FILE = os.environ.get("WW_DATA", "ww_tg_data.json")
+# محدودیت‌های محافظه‌کارانه برای کاهش فشار API و جلوگیری از Flood Limit تلگرام
+API_GLOBAL_GAP = max(0.05, min(1.0, float(os.environ.get("WW_API_GLOBAL_GAP", "0.06"))))
+API_PRIVATE_GAP = max(1.0, min(5.0, float(os.environ.get("WW_API_PRIVATE_GAP", "1.10"))))
+API_GROUP_GAP = max(3.0, min(10.0, float(os.environ.get("WW_API_GROUP_GAP", "3.20"))))
+USER_BURST_COUNT = max(3, min(20, int(os.environ.get("WW_USER_BURST_COUNT", "8"))))
+USER_BURST_WINDOW = max(5, min(60, int(os.environ.get("WW_USER_BURST_WINDOW", "10"))))
+USER_MINUTE_LIMIT = max(USER_BURST_COUNT, min(120, int(os.environ.get("WW_USER_MINUTE_LIMIT", "40"))))
 ATTACK_COOLDOWN = int(os.environ.get("WW_COOLDOWN", "180"))  # ثانیه بین دو حمله
 STATEMENT_COOLDOWN = 180                                      # ثانیه بین دو بیانیه
 IMG_DIR = os.environ.get("WW_IMAGES", "ww_images")            # (اختیاری) پوشه‌ی عکس گزارش‌ها: war.jpg, peace.png ...
@@ -959,6 +968,10 @@ def save():
     tmp = DATA_FILE + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(DB, f, ensure_ascii=False)
+    try:
+        os.chmod(tmp, 0o600)
+    except OSError:
+        pass
     os.replace(tmp, DATA_FILE)
 
 
@@ -1330,10 +1343,46 @@ def _session():
     return s
 
 
+# زمان‌بندی سراسری درخواست‌های خروجی؛ getUpdates از این صف عبور نمی‌کند.
+_API_RATE_LOCK = threading.Lock()
+_API_LAST_GLOBAL = 0.0
+_API_LAST_CHAT = {}
+_API_SEND_METHODS = {"sendMessage", "sendPhoto", "sendDocument", "sendVideo", "sendAudio", "sendMediaGroup"}
+
+
+def _wait_api_slot(method, params):
+    global _API_LAST_GLOBAL
+    if method not in _API_SEND_METHODS:
+        return
+    chat = str((params or {}).get("chat_id") or "")
+    if not chat:
+        return
+    # برای کانال/گروه فاصله بیشتر از چت خصوصی در نظر گرفته می‌شود.
+    gap = API_GROUP_GAP if chat.startswith("-") or chat.startswith("@") else API_PRIVATE_GAP
+    with _API_RATE_LOCK:
+        t = time.monotonic()
+        wait_global = API_GLOBAL_GAP - (t - _API_LAST_GLOBAL)
+        wait_chat = gap - (t - _API_LAST_CHAT.get(chat, 0.0))
+        wait_for = max(0.0, wait_global, wait_chat)
+        if wait_for:
+            time.sleep(wait_for)
+        sent_at = time.monotonic()
+        _API_LAST_GLOBAL = sent_at
+        _API_LAST_CHAT[chat] = sent_at
+        # جلوگیری از رشد نامحدود حافظه در بات‌های پرترافیک
+        if len(_API_LAST_CHAT) > 5000:
+            cutoff = sent_at - 600
+            for key, value in list(_API_LAST_CHAT.items()):
+                if value < cutoff:
+                    _API_LAST_CHAT.pop(key, None)
+
+
 def api(method, params=None, read_timeout=20):
     url = "%s/bot%s/%s" % (API_HOST, TOKEN, method)
     last = None
-    for _ in range(4):
+    attempts = 5 if method == "getUpdates" else 4
+    for attempt in range(attempts):
+        _wait_api_slot(method, params)
         t0 = time.time()
         try:
             r = _session().post(url, json=params or {}, timeout=(8, read_timeout))
@@ -1341,7 +1390,9 @@ def api(method, params=None, read_timeout=20):
         except (requests.RequestException, ValueError) as e:
             last = e
             _TL.s = None
-            time.sleep(1.5)
+            # backoff افزایشی + jitter برای جلوگیری از موج درخواست هم‌زمان
+            if attempt + 1 < attempts:
+                time.sleep(min(12.0, 1.0 * (2 ** attempt)) + random.uniform(0.1, 0.6))
             continue
         dt = time.time() - t0
         if dt > 4 and method != "getUpdates":
@@ -1350,7 +1401,13 @@ def api(method, params=None, read_timeout=20):
             return js
         code = js.get("error_code")
         if code == 429:
-            time.sleep(min(30, (js.get("parameters") or {}).get("retry_after", 3)) + 0.3)
+            retry_after = (js.get("parameters") or {}).get("retry_after", 5)
+            try:
+                retry_after = max(1.0, min(3600.0, float(retry_after)))
+            except (TypeError, ValueError):
+                retry_after = 5.0
+            print("⚠️ محدودیت نرخ تلگرام؛ توقف %.1f ثانیه‌ای" % retry_after)
+            time.sleep(retry_after + random.uniform(0.2, 0.8))
             continue
         raise ApiError("%s: %s %s" % (method, code, js.get("description")))
     raise last if last else ApiError("%s: ناموفق" % method)
@@ -1415,19 +1472,27 @@ def api_form(method, data, files, read_timeout=40):
     """ارسال multipart (برای آپلود عکس)؛ مثل api() با پروکسی و تلاش مجدد."""
     url = "%s/bot%s/%s" % (API_HOST, TOKEN, method)
     last = None
-    for _ in range(3):
+    for attempt in range(4):
+        _wait_api_slot(method, data)
         try:
             r = _session().post(url, data=data, files=files, timeout=(8, read_timeout))
             js = r.json()
         except (requests.RequestException, ValueError) as e:
             last = e
             _TL.s = None
-            time.sleep(1.5)
+            if attempt + 1 < 4:
+                time.sleep(min(12.0, 1.0 * (2 ** attempt)) + random.uniform(0.1, 0.6))
             continue
         if js.get("ok"):
             return js
         if js.get("error_code") == 429:
-            time.sleep(min(30, (js.get("parameters") or {}).get("retry_after", 3)) + 0.3)
+            retry_after = (js.get("parameters") or {}).get("retry_after", 5)
+            try:
+                retry_after = max(1.0, min(3600.0, float(retry_after)))
+            except (TypeError, ValueError):
+                retry_after = 5.0
+            print("⚠️ محدودیت نرخ تلگرام در آپلود؛ توقف %.1f ثانیه‌ای" % retry_after)
+            time.sleep(retry_after + random.uniform(0.2, 0.8))
             continue
         raise ApiError("%s: %s %s" % (method, js.get("error_code"), js.get("description")))
     raise last if last else ApiError("%s: ناموفق" % method)
@@ -2604,7 +2669,7 @@ LAST_POST = {"mid": None}
 POST_MID = {}
 
 
-CH_Q = queue.Queue()
+CH_Q = queue.Queue(maxsize=300)  # صف محدود برای جلوگیری از انباشته‌شدن حافظه
 CH_ASYNC = {"on": False}
 
 
@@ -2633,8 +2698,12 @@ def announce(text, cat=None, iso=None, photo=None, sub=None, pin=False, tag=None
     isos = tuple(iso) if isinstance(iso, (list, tuple)) else ((iso,) if iso else ())
     job = (text, cat, isos, photo, sub, pin, tag)
     if CH_ASYNC["on"] and DB["settings"].get("channel"):
-        CH_Q.put(job)
-        return True
+        try:
+            CH_Q.put_nowait(job)
+            return True
+        except queue.Full:
+            print("⚠️ صف گزارش کانال پر است؛ گزارش جدید برای محافظت از سرویس حذف شد.")
+            return False
     ok, err = post_channel(*job)
     if not ok:
         warn_channel(err)
@@ -10473,6 +10542,36 @@ def set_menu_commands():
         print("setMyCommands ناموفق:", e)
 
 
+# محافظت از کد ورود ادمین در برابر حدس‌زدن
+_ADMIN_CODE_ATTEMPTS = defaultdict(deque)
+_ADMIN_CODE_LOCKED = {}
+_ADMIN_CODE_MAX_ATTEMPTS = 5
+_ADMIN_CODE_WINDOW = 600
+_ADMIN_CODE_LOCK_SECONDS = 900
+
+
+def check_admin_code(uid, supplied):
+    uid = str(uid)
+    t = time.monotonic()
+    locked_until = _ADMIN_CODE_LOCKED.get(uid, 0.0)
+    if t < locked_until:
+        return False, int(locked_until - t) + 1
+    attempts = _ADMIN_CODE_ATTEMPTS[uid]
+    while attempts and t - attempts[0] > _ADMIN_CODE_WINDOW:
+        attempts.popleft()
+    expected = str(admin_code() or "")
+    if expected and hmac.compare_digest(str(supplied), expected):
+        attempts.clear()
+        _ADMIN_CODE_LOCKED.pop(uid, None)
+        return True, 0
+    attempts.append(t)
+    if len(attempts) >= _ADMIN_CODE_MAX_ATTEMPTS:
+        _ADMIN_CODE_LOCKED[uid] = t + _ADMIN_CODE_LOCK_SECONDS
+        attempts.clear()
+        return False, _ADMIN_CODE_LOCK_SECONDS
+    return False, -(_ADMIN_CODE_MAX_ATTEMPTS - len(attempts))
+
+
 def on_text(uid, chat, text, msg):
     u = user(uid, chat)
     u["seen"] = now()
@@ -10500,13 +10599,18 @@ def on_text(uid, chat, text, msg):
         if cmd == "cancel":
             return menu(uid)
         if cmd == "admin":
-            if arg and arg == admin_code():
+            if admin:
+                return menu(uid, "👑 شما از قبل ادمین هستید.")
+            valid, detail = check_admin_code(uid, arg)
+            if valid:
                 if uid not in DB["settings"]["admins"]:
                     DB["settings"]["admins"].append(uid)
                     save()
                 clear(uid)
                 return tell(uid, "👑 تو حالا ادمین هستی! پنل مدیریت به منوی اصلی اضافه شد.", main_rows(uid), force=True)
-            return menu(uid, "👑 شما ادمین هستید." if admin else "❌ کد اشتباهه.")
+            if detail > 0:
+                return menu(uid, "⛔ تلاش‌های ورود موقتاً مسدود شد. %s ثانیه دیگر امتحان کن." % detail)
+            return menu(uid, "❌ کد اشتباه است. تعداد تلاش باقی‌مانده: %d" % abs(detail))
         if cmd == "setchannel" and admin:
             if not arg:
                 return tell(uid, "مثال: /setchannel @WorldWar_Empire")
@@ -10538,6 +10642,31 @@ def on_text(uid, chat, text, msg):
     menu(uid, "❓ متوجه نشدم؛ از دکمه‌های منو استفاده کن 👇")
 
 
+# ضداسپم ورودی: هر کاربر حداکثر ۸ پیام در ۱۰ ثانیه و ۴۰ پیام در دقیقه (قابل تنظیم).
+_INCOMING_RATE = defaultdict(deque)
+_INCOMING_RATE_LOCK = threading.Lock()
+_INCOMING_CHECKS = 0
+
+
+def allow_incoming(uid):
+    global _INCOMING_CHECKS
+    t = time.monotonic()
+    with _INCOMING_RATE_LOCK:
+        q = _INCOMING_RATE[str(uid)]
+        while q and t - q[0] > 60:
+            q.popleft()
+        burst = sum(1 for stamp in q if t - stamp <= USER_BURST_WINDOW)
+        if burst >= USER_BURST_COUNT or len(q) >= USER_MINUTE_LIMIT:
+            return False
+        q.append(t)
+        _INCOMING_CHECKS += 1
+        if _INCOMING_CHECKS % 500 == 0 and len(_INCOMING_RATE) > 10000:
+            for key in list(_INCOMING_RATE.keys()):
+                if not _INCOMING_RATE[key]:
+                    _INCOMING_RATE.pop(key, None)
+        return True
+
+
 def handle_update(upd):
     msg = upd.get("message")
     if not msg:
@@ -10552,6 +10681,9 @@ def handle_update(upd):
         return
     SEEN.append((chat, mid))
     del SEEN[:-500]
+    if not allow_incoming(chat):
+        # پاسخ ندادن به هر پیام اسپم، خودش از Flood شدن بات جلوگیری می‌کند.
+        return
     try:
         lag = now() - float(msg.get("date"))
     except (TypeError, ValueError):
@@ -10580,11 +10712,17 @@ def safe_handle(upd):
 
 
 def main():
-    if TOKEN.startswith("PUT_"):
+    if not TOKEN or TOKEN.startswith("PUT_"):
         print("❌ اول توکن بات رو بذار:\n   BOT_TOKEN=\"توکن\" python main.py")
         sys.exit(1)
     load()
+    print("🛡 محدودیت نرخ خروجی و ضداسپم ورودی فعال است.")
     print("🔐 سیستم ارتقای ادمین فعال است؛ کد از WW_ADMIN_CODE خوانده می‌شود.")
+    # این نسخه از long polling استفاده می‌کند؛ webhook قدیمی را بدون حذف پیام‌های معوق پاک می‌کند.
+    try:
+        api("deleteWebhook", {"drop_pending_updates": False})
+    except Exception as e:  # noqa: BLE001
+        print("⚠️ پاک‌سازی webhook انجام نشد:", str(e)[:180])
     try:
         me = api("getMe").get("result") or {}
         print("✅ متصل شد: @%s" % me.get("username"))
@@ -10598,7 +10736,7 @@ def main():
     while True:
         got = []
         try:
-            params = {"timeout": 25, "allowed_updates": ["message"]}
+            params = {"timeout": 20, "limit": 25, "allowed_updates": ["message"]}
             if DB.get("offset"):
                 params["offset"] = DB["offset"]
             got = api("getUpdates", params, read_timeout=40).get("result") or []
@@ -10618,7 +10756,9 @@ def main():
             if "401" in msg:
                 print("❌ توکن اشتباهه؛ از @BotFather توکن درست رو بگیر.")
             elif "409" in msg:
-                print("❌ این بات یه جای دیگه هم روشنه؛ فقط یک نسخه باید اجرا بشه.")
+                print("❌ تداخل 409: این بات در نمونه دیگری هم در حال long polling است؛ تعداد Replicaهای Railway را روی ۱ بگذارید.")
+                time.sleep(30)
+                continue
             else:
                 print("خطا:", msg)
             time.sleep(5)
