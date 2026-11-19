@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+
 """
 🌍 ربات «جنگ جهانی ✦ امپراتوری» — نسخه‌ی تلگرام (آپدیت بزرگ)
 ════════════════════════════════════════════════════════════
@@ -37,7 +37,12 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
-
+from log_analyzer import (
+    handle_admin_log_upload,
+    get_cached_log,
+    search_lines,
+    format_search_results,
+)
 try:  # برای ساخت خودکار عکس گزارش‌ها (اختیاری)
     from PIL import Image, ImageDraw, ImageFont, ImageFilter
 except Exception:  # noqa: BLE001
@@ -947,7 +952,9 @@ def load():
         ensure(c)
     init_market()
     for a in ADMIN_IDS:
-        if a not in DB["settings"]["admins"]:
+     ADMIN_WAITING_LOG = set()
+ADMIN_WAITING_SEARCH = set()
+      if a not in DB["settings"]["admins"]:
             DB["settings"]["admins"].append(a)
     DB["settings"]["admins"] = list(dict.fromkeys(DB["settings"]["admins"]))
     DB["settings"]["channel"] = DB["settings"].get("channel") or CHANNEL
